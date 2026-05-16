@@ -148,6 +148,102 @@ If you don't see the HUD, see [Troubleshooting](#troubleshooting) below.
 | Stop everything | `./scripts/stop.sh` |
 | Toggle widget mode | Press `⌃⌥J` (Ctrl-Option-J) |
 
+## Voice commands (full vocabulary)
+
+All commands fire after the wake chime. Most run in ~20 ms (no LLM), the rest go to claude CLI.
+
+### Apps & focus
+| Phrase | Action |
+|---|---|
+| "open Safari" / "launch Terminal" / "start VS Code" | Open the named app |
+| "close Chrome" / "quit Spotify" | Quit the named app |
+| "ask claude [prompt]" / "tell codex [prompt]" | Open Claude/Codex desktop app + paste prompt |
+
+### Files
+| Phrase | Action |
+|---|---|
+| "find report" / "find file resume.pdf" | Spotlight search, speak top hit |
+| "open file my-presentation" | Spotlight + open the first match |
+| "create folder Q4 reports" | Make new folder on ~/Desktop |
+| "new folder Bills in downloads" | Make folder in ~/Downloads (or "documents") |
+| "move resume.pdf to Downloads" | Finder-move to Downloads/Desktop/Documents/Trash |
+
+### Windows (acts on frontmost app)
+| Phrase | Action |
+|---|---|
+| "snap left" / "right half" / "top half" / "bottom half" | Snap to half-screen |
+| "maximize" / "fill the screen" | Fill visible frame |
+| "center window" | 70%×75% centered |
+| "minimize" | Cmd-M the front window |
+| "minimize all but this" / "hide everything" | Hide all other apps |
+| "show desktop" | Mission Control: Show Desktop |
+| "next window" / "previous window" | Cycle within the current app |
+
+### Browser
+| Phrase | Action |
+|---|---|
+| "go to github.com" / "open google.com" / "visit anthropic.ai" | Open URL in default browser |
+| "github dot com" (after "go to") | STT-friendly — "dot" → "." |
+| "new tab" / "close tab" / "next tab" / "previous tab" | Tab management |
+| "reopen tab" | Cmd-Shift-T |
+| "back" / "forward" / "reload" / "hard reload" | Navigation |
+| "scroll to top" / "scroll to bottom" | Page-anchor jumps |
+
+### System
+| Phrase | Action |
+|---|---|
+| "volume up/down" / "mute" / "unmute" | Sound output (10%) |
+| "brightness up/down" / "brighter" / "dimmer" | Display brightness (3 ticks) |
+| "wifi on" / "wifi off" | Toggle Wi-Fi (via `networksetup`) |
+| "bluetooth on/off" | Toggle Bluetooth (needs `brew install blueutil`) |
+| "do not disturb on/off" / "focus on" | Toggle DND (needs Apple Shortcut named "Turn On/Off Do Not Disturb") |
+| "screenshot" / "take a screenshot" | Save to ~/Desktop |
+| "empty the trash" | Finder empty trash |
+| "lock the screen" / "go to sleep" | Lock or sleep Mac |
+
+### Media (Spotify-first)
+| Phrase | Action |
+|---|---|
+| "play" / "pause" / "next" / "previous" | Spotify control |
+
+### Search
+| Phrase | Action |
+|---|---|
+| "search for X" / "google X" / "look up X" | Google search |
+| "search youtube for X" / "youtube X" | YouTube search |
+
+### Notes & Reminders
+| Phrase | Action |
+|---|---|
+| "note that I need to call mom" | New Note in Notes.app |
+| "make a note budget Q4 ideas" | Same |
+| "remind me to call mom tomorrow" | New Reminder with natural-time clause |
+| "remind me to check the oven in 30 minutes" | Same — Reminders.app parses the time |
+| "add milk to shopping list" | Append to existing Reminders list (or default) |
+
+### System info (voice queries)
+| Phrase | Answer |
+|---|---|
+| "what's my battery?" / "battery status" | "Battery is at 87%, charging, 4h 22m remaining" |
+| "cpu usage" / "memory" / "disk free" | Live metric from system snapshot |
+| "wifi" / "network" | Connected SSID + signal strength |
+| "uptime" / "how long has the Mac been on?" | Formatted uptime |
+
+### Time & date
+| Phrase | Answer |
+|---|---|
+| "what time is it" / "tell me the time" | Spoken time |
+| "what's the date" / "what day is it" | Spoken date |
+
+### Code dictation (special)
+| Phrase | Action |
+|---|---|
+| "claude code create a Next.js site" | Types into frontmost Terminal claude session |
+| "code refactor this component" | Same — shorter prefix |
+| "claude add typescript types" | Same |
+
+Anything not matched above falls through to the LLM brain (Ollama for knowledge, claude CLI for complex tasks).
+
 ## Architecture
 
 ```
