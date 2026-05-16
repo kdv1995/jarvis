@@ -119,8 +119,14 @@ wireTopBar();
 // driven by screenX/screenY deltas, throttled to requestAnimationFrame so the
 // IPC traffic stays sane during fast drags.
 function wireDrag(): void {
-  const dragEl = document.querySelector<HTMLElement>(".topbar-drag");
-  if (!dragEl) return;
+  // Listen on the entire topbar (excluding clickable buttons), not just the
+  // narrow "JARVIS" label, so the user has more drag surface area.
+  const dragEl = document.getElementById("topbar");
+  if (!dragEl) {
+    console.warn("[jarvis] drag: #topbar not found");
+    return;
+  }
+  console.log("[jarvis] drag handler wired on", dragEl);
 
   let dragging = false;
   let lastX = 0;
@@ -143,17 +149,25 @@ function wireDrag(): void {
   };
 
   dragEl.addEventListener("mousedown", (e) => {
+    // Ignore mousedown on traffic-light buttons (let them get their click).
+    const target = e.target as HTMLElement;
+    if (target.closest(".tl")) return;
+
     if (e.button !== 0) return;
     dragging = true;
     lastX = e.screenX;
     lastY = e.screenY;
     e.preventDefault();
+    console.log("[jarvis] drag start at", lastX, lastY);
   });
 
   window.addEventListener("mousemove", (e) => {
     if (!dragging) return;
-    pendingDx += e.screenX - lastX;
-    pendingDy += e.screenY - lastY;
+    // Convert CSS pixel deltas to physical pixels — set_position takes a
+    // PhysicalPosition. On Retina @2x, devicePixelRatio === 2.
+    const dpr = window.devicePixelRatio || 1;
+    pendingDx += (e.screenX - lastX) * dpr;
+    pendingDy += (e.screenY - lastY) * dpr;
     lastX = e.screenX;
     lastY = e.screenY;
     if (!rafScheduled) {
@@ -163,10 +177,12 @@ function wireDrag(): void {
   });
 
   const stop = (): void => {
+    if (dragging) console.log("[jarvis] drag end");
     dragging = false;
   };
   window.addEventListener("mouseup", stop);
   window.addEventListener("mouseleave", stop);
+  window.addEventListener("blur", stop);
 }
 wireDrag();
 

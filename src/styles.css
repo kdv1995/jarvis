@@ -118,8 +118,9 @@ body {
   color: rgba(221, 230, 240, 0.7);
   text-transform: uppercase;
   cursor: grab;
-  /* The data-tauri-drag-region attribute makes this region initiate native
-     window drag on mousedown — works across screens automatically. */
+  /* Belt-and-braces: parent .topbar already has pointer-events: auto, but
+     some flex layouts collapse children's pointer-events behaviour. */
+  pointer-events: auto;
 }
 .topbar-drag:active {
   cursor: grabbing;
