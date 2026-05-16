@@ -38,7 +38,10 @@ body {
    state-badge / trace, so it never gets covered. */
 .topbar {
   position: fixed;
-  top: 0;
+  /* macOS menu bar + notch eat the first ~38 px of the screen; sit below it
+     so close/min/screen buttons are reachable. env() gracefully falls back
+     on non-notched Macs where menu bar is ~24 px (gap is acceptable). */
+  top: env(safe-area-inset-top, 38px);
   left: 0;
   right: 0;
   height: 28px;
@@ -194,8 +197,8 @@ canvas#hologram-canvas {
 
 /* ── Clock (top-right) ───────────────────────────────────────────── */
 .clock {
-  /* Offset by topbar height (28px) + breathing room. */
-  top: 40px;
+  /* macOS menu bar (~38px) + topbar (28px) + breathing room (12px). */
+  top: 78px;
   right: 24px;
   width: 240px;
 }
@@ -324,8 +327,8 @@ canvas#hologram-canvas {
 
 /* ── Info (top-left) ─────────────────────────────────────────────── */
 .info {
-  /* Offset by topbar height (28px) + breathing room. */
-  top: 40px;
+  /* macOS menu bar (~38px) + topbar (28px) + breathing room (12px). */
+  top: 78px;
   left: 24px;
   width: 280px;
   font-size: 11px;
@@ -343,7 +346,7 @@ canvas#hologram-canvas {
 .state-badge {
   position: fixed;
   left: 50%;
-  top: 44px;
+  top: 82px;
   transform: translateX(-50%);
   color: var(--c-glow);
   font-family: var(--display);
@@ -374,7 +377,7 @@ canvas#hologram-canvas {
 .trace {
   position: fixed;
   left: 50%;
-  top: 82px;
+  top: 120px;
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
