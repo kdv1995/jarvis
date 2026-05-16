@@ -1323,6 +1323,80 @@ fn try_fast_action(command: &str) -> Option<String> {
         return fast_browser_key_code(119, "", "Bottom.");
     }
 
+    // ── System control (Pack 4) ─────────────────────────────────────────
+    // Brightness — key codes 144 (down) / 145 (up). NOTE: these are the
+    // dedicated function keys on Apple keyboards. AppleScript fires them
+    // even when the keyboard doesn't have physical brightness keys.
+    if matches!(
+        cleaned,
+        "brightness up" | "brighter" | "increase brightness" | "turn up brightness"
+    ) {
+        return fast_brightness(true);
+    }
+    if matches!(
+        cleaned,
+        "brightness down" | "dimmer" | "decrease brightness" | "turn down brightness"
+    ) {
+        return fast_brightness(false);
+    }
+
+    // Wi-Fi.
+    if matches!(
+        cleaned,
+        "wifi on" | "turn on wifi" | "enable wifi" | "wi-fi on" | "turn on wi-fi"
+    ) {
+        return fast_wifi(true);
+    }
+    if matches!(
+        cleaned,
+        "wifi off" | "turn off wifi" | "disable wifi" | "wi-fi off" | "turn off wi-fi"
+    ) {
+        return fast_wifi(false);
+    }
+
+    // Bluetooth — requires `blueutil` (homebrew). Falls through gracefully if
+    // not installed, with a helpful message.
+    if matches!(
+        cleaned,
+        "bluetooth on" | "turn on bluetooth" | "enable bluetooth"
+    ) {
+        return fast_bluetooth(true);
+    }
+    if matches!(
+        cleaned,
+        "bluetooth off" | "turn off bluetooth" | "disable bluetooth"
+    ) {
+        return fast_bluetooth(false);
+    }
+
+    // Do Not Disturb / Focus mode — toggle via shortcuts CLI when available,
+    // fall back to opening Control Center.
+    if matches!(
+        cleaned,
+        "do not disturb on"
+            | "dnd on"
+            | "turn on do not disturb"
+            | "enable do not disturb"
+            | "focus on"
+    ) {
+        return fast_dnd(true);
+    }
+    if matches!(
+        cleaned,
+        "do not disturb off"
+            | "dnd off"
+            | "turn off do not disturb"
+            | "disable do not disturb"
+            | "focus off"
+    ) {
+        return fast_dnd(false);
+    }
+
+    // Empty trash. Destructive, so only via explicit "empty the trash".
+    if matches!(cleaned, "empty the trash" | "empty trash") {
+        return fast_empty_trash();
+    }
+
     None
 }
 
@@ -2028,6 +2102,132 @@ fn format_modifiers(modifiers: &str) -> String {
         .map(|s| format!("{} down", s.trim()))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+// ── System control (Pack 4) ─────────────────────────────────────────────
+
+fn fast_brightness(up: bool) -> Option<String> {
+    let code = if up { 144 } else { 145 };
+    // Apply 3 ticks per command so user notices the change.
+    for _ in 0..3 {
+        let _ = run_osascript(&format!(
+            "tell application \"System Events\" to key code {code}"
+        ));
+    }
+    Some(if up {
+        "Brighter.".into()
+    } else {
+        "Dimmer.".into()
+    })
+}
+
+fn fast_wifi(on: bool) -> Option<String> {
+    // `networksetup -setairportpower` is the canonical macOS CLI. The device
+    // name is usually 'en0' on modern Macs but can be 'en1' — query first.
+    let device = match Command::new("/usr/sbin/networksetup")
+        .arg("-listallhardwareports")
+        .output()
+    {
+        Ok(o) => {
+            let text = String::from_utf8_lossy(&o.stdout).to_string();
+            let mut found = None;
+            let mut lines = text.lines();
+            while let Some(line) = lines.next() {
+                if line.contains("Wi-Fi") || line.contains("AirPort") {
+                    // Next non-empty line that has "Device: enN"
+                    for next in lines.by_ref() {
+                        if let Some(rest) = next.trim().strip_prefix("Device: ") {
+                            found = Some(rest.to_string());
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+            found.unwrap_or_else(|| "en0".into())
+        }
+        Err(_) => "en0".into(),
+    };
+    let state = if on { "on" } else { "off" };
+    let ok = Command::new("/usr/sbin/networksetup")
+        .arg("-setairportpower")
+        .arg(&device)
+        .arg(state)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok {
+        Some(if on {
+            "Wi-Fi on.".into()
+        } else {
+            "Wi-Fi off.".into()
+        })
+    } else {
+        Some("Couldn't change Wi-Fi.".into())
+    }
+}
+
+fn fast_bluetooth(on: bool) -> Option<String> {
+    // `blueutil` is a Homebrew package — not preinstalled. Detect first.
+    let blueutil = ["/opt/homebrew/bin/blueutil", "/usr/local/bin/blueutil"]
+        .iter()
+        .find(|p| std::path::Path::new(p).exists())
+        .copied();
+    let path = match blueutil {
+        Some(p) => p,
+        None => {
+            return Some(
+                "Bluetooth control needs blueutil. Install with brew install blueutil.".into(),
+            );
+        }
+    };
+    let state = if on { "1" } else { "0" };
+    let ok = Command::new(path)
+        .arg("--power")
+        .arg(state)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok {
+        Some(if on {
+            "Bluetooth on.".into()
+        } else {
+            "Bluetooth off.".into()
+        })
+    } else {
+        Some("Couldn't change Bluetooth.".into())
+    }
+}
+
+fn fast_dnd(on: bool) -> Option<String> {
+    // macOS 12+ exposes DND via `shortcuts run` if the user has set up the
+    // shortcut, but the canonical scriptable way is via Control Center.
+    // We use a Shortcuts-friendly URL scheme as fallback, which works on
+    // Sonoma+ for Focus modes.
+    let url = if on {
+        "shortcuts://run-shortcut?name=Turn%20On%20Do%20Not%20Disturb"
+    } else {
+        "shortcuts://run-shortcut?name=Turn%20Off%20Do%20Not%20Disturb"
+    };
+    let _ = Command::new("/usr/bin/open").arg(url).status();
+    // We can't verify success — shortcuts:// URLs always return 0 even if no
+    // shortcut by that name exists. Return a soft response.
+    Some(if on {
+        "Do Not Disturb on (if shortcut exists).".into()
+    } else {
+        "Do Not Disturb off (if shortcut exists).".into()
+    })
+}
+
+fn fast_empty_trash() -> Option<String> {
+    // Finder "empty the trash" — safer than rm -rf because it triggers the
+    // Finder confirmation only if the user has it enabled in Settings.
+    let script = "tell application \"Finder\" to empty the trash";
+    if run_osascript(script).is_ok() {
+        Some("Trash emptied.".into())
+    } else {
+        Some("Couldn't empty trash.".into())
+    }
 }
 
 /// Match common ways the user can ask for the morning briefing. Kept tight —
