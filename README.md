@@ -34,34 +34,109 @@ You'll also need accounts/installs for:
 
 ## Install
 
+> **Important:** the order below matters. The first build *must* go through `tauri build` (step 5) because `scripts/install.sh` expects an existing `.app` skeleton — it only swaps in fresh binaries on subsequent rebuilds.
+
+### 1. Clone and configure
+
 ```bash
 git clone https://github.com/kdv1995/jarvis.git
 cd jarvis
 
-# 1. Configure
 cp .env.example .env
-# Edit .env: add ELEVENLABS_API_KEY if you want ElevenLabs fallback (optional)
+# Open .env in your editor. ELEVENLABS_API_KEY is optional — leave blank to use
+# only the local Whisper + Kokoro stack.
+```
 
-# 2. Frontend deps
-npm install
+### 2. Install frontend deps
 
-# 3. Python services (one terminal each, leave running)
-cd whisper-stt && python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && python server.py
-cd ../kokoro-tts && python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && python server.py
+```bash
+npm install     # installs Vite, Three.js, Tauri CLI (~110 MB)
+```
 
-# 4. Stable code-signing cert (one-time, asks for sudo once — keeps TCC permissions across rebuilds)
-./scripts/create-codesign-cert.sh
+### 3. Build the clap-wake daemon
 
-# 5. Build + install Jarvis.app to /Applications and launch
+```bash
+cd clap-daemon
+cargo build --release
+cd ..
+```
+
+This produces `clap-daemon/target/release/jarvis-clap-daemon`, a separate small Rust binary the main app launches in the background for low-latency wake detection.
+
+### 4. Start the Python STT and TTS servers
+
+These must be **running before** you launch Jarvis (Jarvis talks to them over `127.0.0.1:11435` and `:11436`). Open two separate terminal tabs and leave each running:
+
+**Tab A — Whisper STT (`http://127.0.0.1:11436`)**
+```bash
+cd whisper-stt
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python server.py
+```
+First run downloads the Whisper model (~1.5 GB) into `~/.cache/huggingface/`.
+
+**Tab B — Kokoro TTS (`http://127.0.0.1:11435`)**
+```bash
+cd kokoro-tts
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python server.py
+```
+First run downloads the Kokoro voice models (~300 MB).
+
+Quick sanity check from a third terminal — both should reply `ok`:
+```bash
+curl -s http://127.0.0.1:11436/health
+curl -s http://127.0.0.1:11435/health
+```
+
+### 5. Create the stable code-signing cert (one-time)
+
+```bash
+./scripts/create-codesign-cert.sh   # asks for your sudo password ONCE
+```
+
+Without this, macOS will re-prompt you for Microphone, Accessibility, and Automation permissions on every rebuild. The cert is locally generated, valid for 10 years, and only trusted by your own machine — it never leaves your laptop.
+
+### 6. First build: produce the .app bundle
+
+```bash
+./node_modules/.bin/tauri build --bundles app
+```
+
+This compiles Rust, builds the frontend (Vite → `dist/`), and assembles `src-tauri/target/release/bundle/macos/Jarvis.app` with the frontend embedded into the binary. Takes ~3–5 minutes on a clean M1.
+
+### 7. Install + launch
+
+```bash
 ./scripts/install.sh
 ```
 
-On first launch, macOS asks for:
-- **Microphone** — needed for STT
-- **Accessibility** — needed for AppleScript window control
-- **Automation → Terminal** — needed for dictation passthrough
+The script copies the bundle to `/Applications/Jarvis.app`, signs it with your cert, kills any running instance, and launches via `open -a Jarvis`. Use this same script for every future rebuild — it's much faster than step 6.
 
-Grant all three. With the signing cert in place, you grant them **once** — every future `./scripts/install.sh` keeps them.
+### 8. Grant macOS permissions (first launch only)
+
+When Jarvis starts, macOS shows three prompts in sequence:
+
+- **Microphone** — for speech-to-text
+- **Accessibility** — for AppleScript window control (focusing Terminal, etc.)
+- **Automation → Terminal** — for dictation passthrough into running `claude` sessions
+
+Click **Allow** on all three. Because the app is signed with your stable cert, you'll only see these prompts once — every future install keeps the grants.
+
+### Verifying it works
+
+After launch you should see:
+- A transparent silver-blue holographic portrait overlay across your whole screen
+- HUD panels in the corners (clock, signal info, audio spectrum)
+- A "PROJECTING" badge at top-center
+
+Clap once — the badge should change to "SCANNING" and you'll hear a wake chime. Speak a question. The badge will transition through "ANALYZING" → "TRANSMITTING" as Jarvis responds via the TTS engine.
+
+If you don't see the HUD, see [Troubleshooting](#troubleshooting) below.
 
 ## Usage
 
@@ -106,13 +181,21 @@ Key files:
 
 ## Troubleshooting
 
-**HUD invisible after install** → run `./node_modules/.bin/tauri build --bundles app` (NOT `cargo build`) so frontend assets get embedded into the binary.
+**HUD invisible after install** → run `./node_modules/.bin/tauri build --bundles app` (NOT `cargo build`) so frontend assets get embedded into the binary. Tauri 2 compiles `dist/` into the Rust binary via `tauri-build` macros — `cargo build --release` alone produces a binary without any frontend.
 
-**TCC permissions re-prompt every install** → you skipped `create-codesign-cert.sh`. Run it once, then re-install.
+**TCC permissions re-prompt every install** → you skipped `create-codesign-cert.sh`. Run it once, then re-install. The ad-hoc fallback signing in `install.sh` works but keys mic grants to the binary's `cdhash`, which changes every build.
 
 **Mic captures background noise as gibberish** → check input volume in System Settings → Sound → Input. Below 30% mic level produces unstable STT.
 
 **`claude` CLI hangs** → the pipeline has a 45-second watchdog that auto-respawns the session. Check `~/.jarvis/journal.jsonl` for conversation state.
+
+**`install.sh` fails with "No bundle skeleton"** → you haven't run step 6 (`tauri build --bundles app`) yet. The script needs an existing `Jarvis.app` skeleton to copy from before it can swap in a fresh binary.
+
+**`python server.py` errors with "Module not found: faster_whisper" or "kokoro"** → you forgot to activate the venv. Run `source .venv/bin/activate` first, or re-run the `pip install` step inside the venv.
+
+**Jarvis launches but never wakes on a clap** → check that `clap-daemon/target/release/jarvis-clap-daemon` exists (step 3). The main app spawns it as a subprocess; without it, only voice wake words work.
+
+**ElevenLabs not used even though key is set** → check `.env` has no quotes around the value and is at the project root (not inside `src-tauri/`). Restart Jarvis after editing `.env` — env vars are read once at startup.
 
 ## Privacy
 
