@@ -218,6 +218,21 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Jarvis");
+        .build(tauri::generate_context!())
+        .expect("error while building Jarvis")
+        .run(|app_handle, event| {
+            // Dock-icon click on macOS → bring Jarvis back if it was hidden
+            // by the minimise button (we call window.hide() there). Without
+            // this, `open -a Jarvis` and dock clicks do nothing visible.
+            if let tauri::RunEvent::Reopen { .. } = event {
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.show();
+                    // For our NSPanel, set_focus is a no-op (can_become_key
+                    // is false), but show() alone un-hides it so the panel
+                    // appears at its current PanelLevel::Floating position
+                    // on top of normal app windows.
+                    let _ = window.set_focus();
+                }
+            }
+        });
 }
