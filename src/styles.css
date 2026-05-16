@@ -45,16 +45,16 @@ body {
   left: 0;
   right: 0;
   height: 36px;
-  /* Higher opacity than the original 0.78 — the dark hologram + macOS dark
-     menu bar were making the bar disappear visually. 0.95 reads as a
-     distinct chrome layer. */
-  background: linear-gradient(
-    180deg,
-    rgba(8, 12, 18, 0.95),
-    rgba(8, 12, 18, 0.88)
-  );
-  border-bottom: 1px solid rgba(196, 212, 232, 0.4);
-  box-shadow: 0 1px 12px rgba(0, 0, 0, 0.5);
+  /* SOLID opaque dark navy + bright silver-blue glow border below. The
+     previous semi-transparent dark grey was blending into the macOS menu
+     bar visually — both dark, no clear edge between them. Solid bg +
+     2px glow border gives a clear "this is a separate UI layer" cue. */
+  background: #0a0e14;
+  border-top: 1px solid rgba(196, 212, 232, 0.15);
+  border-bottom: 2px solid var(--c-glow);
+  box-shadow:
+    0 0 24px rgba(196, 212, 232, 0.35),
+    0 2px 0 rgba(196, 212, 232, 0.6);
   display: flex;
   align-items: center;
   padding: 0 12px;
@@ -87,9 +87,11 @@ body {
   box-sizing: border-box;
   flex-shrink: 0;
   display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 1px solid rgba(0, 0, 0, 0.28);
+  /* Slightly larger than native (12px) so each dot has its own visible glow
+     against the dark navy background. */
+  width: 16px;
+  height: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 50%;
   padding: 0;
   margin: 0;
@@ -97,25 +99,32 @@ body {
   outline: none;
   transition:
     filter 0.15s,
-    transform 0.08s;
+    transform 0.08s,
+    box-shadow 0.15s;
+}
+.tl.close {
+  background: #ff5f57;
+  box-shadow: 0 0 8px rgba(255, 95, 87, 0.5);
+}
+.tl.min {
+  background: #febc2e;
+  box-shadow: 0 0 8px rgba(254, 188, 46, 0.5);
+}
+.tl.screen {
+  background: #28c840;
+  box-shadow: 0 0 8px rgba(40, 200, 64, 0.5);
 }
 .tl:focus {
   outline: none;
 }
 .tl:hover {
-  filter: brightness(1.12);
+  filter: brightness(1.2);
+  box-shadow:
+    0 0 14px currentColor,
+    0 0 4px rgba(255, 255, 255, 0.4);
 }
 .tl:active {
   transform: scale(0.92);
-}
-.tl.close {
-  background: #ff5f57;
-}
-.tl.min {
-  background: #febc2e;
-}
-.tl.screen {
-  background: #28c840;
 }
 
 /* Centre drag region — also doubles as the JARVIS label. */
