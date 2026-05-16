@@ -44,7 +44,17 @@ body {
   top: env(safe-area-inset-top, 38px);
   left: 0;
   right: 0;
-  height: 28px;
+  height: 36px;
+  /* Higher opacity than the original 0.78 — the dark hologram + macOS dark
+     menu bar were making the bar disappear visually. 0.95 reads as a
+     distinct chrome layer. */
+  background: linear-gradient(
+    180deg,
+    rgba(8, 12, 18, 0.95),
+    rgba(8, 12, 18, 0.88)
+  );
+  border-bottom: 1px solid rgba(196, 212, 232, 0.4);
+  box-shadow: 0 1px 12px rgba(0, 0, 0, 0.5);
   display: flex;
   align-items: center;
   padding: 0 12px;
