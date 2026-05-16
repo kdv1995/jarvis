@@ -160,6 +160,9 @@ canvas#hologram-canvas {
   height: 100%;
   display: block;
   pointer-events: none;
+  /* Explicit low z-index so the topbar (z:100) is guaranteed on top.
+     Without this, default `auto` could create stacking quirks. */
+  z-index: 1;
 }
 
 /* ── HUD shells ──────────────────────────────────────────────────── */

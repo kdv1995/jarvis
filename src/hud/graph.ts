@@ -389,8 +389,14 @@ export function init(container: HTMLElement): void {
 
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
-  camera.position.set(0, 0, 4.4);
+  // Push the camera back so the portrait takes ~70% of original screen
+  // height instead of dominating the whole viewport. Frees the top zone
+  // so the chrome bar buttons + menu bar are unobstructed.
+  camera.position.set(0, 0, 5.8);
   portraitGroup = new THREE.Group();
+  // Shift the head slightly downward so the forehead doesn't crowd the
+  // top bar area.
+  portraitGroup.position.y = -0.25;
   scene.add(portraitGroup);
 
   const loader = new THREE.TextureLoader();
