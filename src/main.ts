@@ -113,6 +113,63 @@ function wireTopBar(): void {
 }
 wireTopBar();
 
+// --- Manual drag for the borderless NSPanel ---------------------------------
+// `data-tauri-drag-region` calls NSWindow.performWindowDragWithEvent which is
+// a no-op on borderless panels. We bridge with our own move_window_by command
+// driven by screenX/screenY deltas, throttled to requestAnimationFrame so the
+// IPC traffic stays sane during fast drags.
+function wireDrag(): void {
+  const dragEl = document.querySelector<HTMLElement>(".topbar-drag");
+  if (!dragEl) return;
+
+  let dragging = false;
+  let lastX = 0;
+  let lastY = 0;
+  let pendingDx = 0;
+  let pendingDy = 0;
+  let rafScheduled = false;
+
+  const flush = (): void => {
+    rafScheduled = false;
+    const dx = pendingDx;
+    const dy = pendingDy;
+    pendingDx = 0;
+    pendingDy = 0;
+    if (dx !== 0 || dy !== 0) {
+      void invoke("move_window_by", { dx, dy }).catch((e) =>
+        console.warn("[jarvis] move_window_by failed:", e),
+      );
+    }
+  };
+
+  dragEl.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    dragging = true;
+    lastX = e.screenX;
+    lastY = e.screenY;
+    e.preventDefault();
+  });
+
+  window.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    pendingDx += e.screenX - lastX;
+    pendingDy += e.screenY - lastY;
+    lastX = e.screenX;
+    lastY = e.screenY;
+    if (!rafScheduled) {
+      rafScheduled = true;
+      requestAnimationFrame(flush);
+    }
+  });
+
+  const stop = (): void => {
+    dragging = false;
+  };
+  window.addEventListener("mouseup", stop);
+  window.addEventListener("mouseleave", stop);
+}
+wireDrag();
+
 // --- Tauri event wiring -----------------------------------------------------
 // `listen` reaches into Tauri internals; in a plain browser (or before the
 // API is ready) that throws. Guard it so the avatar still renders standalone.

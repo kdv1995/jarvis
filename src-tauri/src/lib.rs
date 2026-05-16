@@ -134,7 +134,8 @@ pub fn run() {
             commands::get_system_snapshot,
             commands::move_to_next_screen,
             commands::minimise_jarvis,
-            commands::close_jarvis
+            commands::close_jarvis,
+            commands::move_window_by
         ])
         .setup(move |app| {
             #[cfg(target_os = "macos")]

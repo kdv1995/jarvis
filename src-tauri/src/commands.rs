@@ -113,3 +113,29 @@ pub fn minimise_jarvis(app: AppHandle) -> Result<(), String> {
 pub fn close_jarvis(app: AppHandle) {
     app.exit(0);
 }
+
+/// Move the Jarvis panel by a delta in physical pixels. Called by the
+/// JS drag handler on every mousemove during a drag of the top bar — the
+/// standard `data-tauri-drag-region` machinery doesn't fire for borderless
+/// NSPanels, so we fall back to manual position updates.
+#[tauri::command]
+pub fn move_window_by(app: AppHandle, dx: i32, dy: i32) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::PhysicalPosition;
+        let window = app
+            .get_webview_window("main")
+            .ok_or("main window not found")?;
+        let pos = window
+            .outer_position()
+            .map_err(|e| format!("outer_position: {e}"))?;
+        window
+            .set_position(PhysicalPosition::new(pos.x + dx, pos.y + dy))
+            .map_err(|e| format!("set_position: {e}"))?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, dx, dy);
+    }
+    Ok(())
+}
