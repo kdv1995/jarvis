@@ -124,8 +124,11 @@ fn state() -> &'static Mutex<State> {
 pub fn snapshot() -> SystemSnapshot {
     let mut s = state().lock_recover();
 
-    // Refresh slow fields (battery, wifi, front app) every 5 seconds.
-    if s.last_slow_refresh.elapsed() >= Duration::from_secs(5) {
+    // Refresh slow fields (battery, wifi, front app) every 15 seconds.
+    // These change rarely (battery drops 1% over ~5 min, WiFi steady for
+    // minutes, front app on every Cmd-Tab) — anything tighter just burns
+    // ~100ms on system_profiler shell-outs for no perceivable benefit.
+    if s.last_slow_refresh.elapsed() >= Duration::from_secs(15) {
         s.env = refresh_environment();
         s.identity.uptime_secs = System::uptime();
         let (src, watts) = read_power_source();

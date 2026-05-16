@@ -4,7 +4,10 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
-const POLL_MS = 500;
+// Ambient HUD doesn't need a real-time dashboard. 1.5s gives a smooth
+// "live" feel without burning IPC + battery for sub-second precision the
+// user can't perceive. Bump down to 500 for debugging if needed.
+const POLL_MS = 1500;
 
 interface Identity {
   host: string;
