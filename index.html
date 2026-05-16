@@ -14,6 +14,34 @@
   </head>
   <body>
     <div class="stage" id="stage" data-state="idle">
+      <!-- Top bar — always visible. Drag region in the centre lets you move
+           Jarvis between screens; left side has macOS-style traffic lights
+           (close / minimise) plus a "next screen" button. -->
+      <div class="topbar" id="topbar">
+        <div class="traffic-lights">
+          <button
+            class="tl close"
+            id="tl-close"
+            aria-label="Quit Jarvis"
+            title="Quit Jarvis"
+          ></button>
+          <button
+            class="tl min"
+            id="tl-min"
+            aria-label="Minimise"
+            title="Minimise"
+          ></button>
+          <button
+            class="tl screen"
+            id="tl-screen"
+            aria-label="Move to next screen"
+            title="Move to next screen"
+          ></button>
+        </div>
+        <div class="topbar-drag" data-tauri-drag-region>JARVIS</div>
+        <div class="topbar-spacer"></div>
+      </div>
+
       <!-- Three.js depth-hologram canvas is created inside #hud by graph.ts -->
       <div id="hud"></div>
 

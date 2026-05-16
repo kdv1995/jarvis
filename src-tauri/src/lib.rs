@@ -131,7 +131,10 @@ pub fn run() {
             commands::stop_and_process,
             commands::tts_voice,
             commands::set_widget_mode,
-            commands::get_system_snapshot
+            commands::get_system_snapshot,
+            commands::move_to_next_screen,
+            commands::minimise_jarvis,
+            commands::close_jarvis
         ])
         .setup(move |app| {
             #[cfg(target_os = "macos")]

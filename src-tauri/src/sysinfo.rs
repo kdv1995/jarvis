@@ -335,24 +335,42 @@ fn read_wifi() -> (Option<String>, Option<i32>) {
         Ok(s) => s,
         Err(_) => return (None, None),
     };
+    // `system_profiler` can emit multiple "Current Network Information:"
+    // sections (e.g. per-interface), but only the first has a real SSID —
+    // others are empty stubs. Take the first; bail out as soon as we have
+    // both ssid+rssi or hit the next major section.
     let mut lines = out.lines();
-    let mut ssid = None;
-    let mut rssi = None;
+    let mut ssid: Option<String> = None;
+    let mut rssi: Option<i32> = None;
     while let Some(line) = lines.next() {
-        if line.contains("Current Network Information:") {
-            // Next non-empty line is "SSID:" (with trailing colon).
-            if let Some(name_line) = lines.find(|l| !l.trim().is_empty()) {
-                let s = name_line.trim().trim_end_matches(':').to_string();
-                if !s.is_empty() {
-                    ssid = Some(s);
+        if ssid.is_none() && line.contains("Current Network Information:") {
+            // The SSID line is the first non-empty line whose key (before ':')
+            // is NOT a known property like "Network Type", "Channel", etc.
+            // It's effectively `<SSID>:` with no value, just nested deeper.
+            for name_line in lines.by_ref() {
+                let trimmed = name_line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                // SSID lines end with ':' and have no value after it.
+                // Property lines look like "Key: value" — skip those.
+                let stripped = trimmed.trim_end_matches(':');
+                let is_property = trimmed.contains(": ") || trimmed.ends_with(':') && stripped.contains(": ");
+                if !is_property && !stripped.is_empty() {
+                    ssid = Some(stripped.to_string());
+                }
+                break;
+            }
+        }
+        if rssi.is_none() {
+            if let Some(rest) = line.trim().strip_prefix("Signal / Noise:") {
+                if let Some(num) = rest.trim().split_whitespace().next() {
+                    rssi = num.parse::<i32>().ok();
                 }
             }
         }
-        if let Some(rest) = line.trim().strip_prefix("Signal / Noise:") {
-            // e.g. "-52 dBm / -90 dBm"
-            if let Some(num) = rest.trim().split_whitespace().next() {
-                rssi = num.parse::<i32>().ok();
-            }
+        if ssid.is_some() && rssi.is_some() {
+            break;
         }
     }
     (ssid, rssi)

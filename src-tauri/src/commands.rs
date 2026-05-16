@@ -70,3 +70,46 @@ pub fn set_widget_mode(app: AppHandle, mode: String) -> Result<(), String> {
 pub fn get_system_snapshot() -> crate::sysinfo::SystemSnapshot {
     crate::sysinfo::snapshot()
 }
+
+/// Move the Jarvis panel to the next available monitor, wrapping around.
+/// No-op if only one screen is connected.
+#[tauri::command]
+pub fn move_to_next_screen(app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let window = app
+            .get_webview_window("main")
+            .ok_or("main window not found")?;
+        crate::overlay::move_to_next_screen(&window)?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+    }
+    Ok(())
+}
+
+/// Hide the Jarvis panel without quitting the process. Voice pipeline keeps
+/// running in the background; Dock icon (or `open -a Jarvis`) brings it back.
+#[tauri::command]
+pub fn minimise_jarvis(app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let window = app
+            .get_webview_window("main")
+            .ok_or("main window not found")?;
+        crate::overlay::minimise(&window)?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+    }
+    Ok(())
+}
+
+/// Fully quit Jarvis. The pipeline shuts down, the panel closes, and the
+/// process exits cleanly. Used by the top-bar close button.
+#[tauri::command]
+pub fn close_jarvis(app: AppHandle) {
+    app.exit(0);
+}

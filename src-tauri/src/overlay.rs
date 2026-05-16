@@ -130,9 +130,15 @@ pub fn apply_widget_mode(window: &WebviewWindow, mode: WidgetMode) -> Result<(),
         WidgetMode::Fullscreen => {
             let _ = window.set_size(mon_size);
             let _ = window.set_position(mon_pos);
+            // Interactive so the always-visible top bar (close / minimise /
+            // next-screen / drag handle) can receive clicks. Everything
+            // outside the top bar uses CSS `pointer-events: none` so clicks
+            // on the hologram fall through to the webview background and
+            // are silently consumed. This trades the OS-level click-pass-
+            // through for a discoverable, chrome-style UX — see README.
             window
-                .set_ignore_cursor_events(true)
-                .map_err(|e| format!("overlay: set_ignore_cursor_events(true) failed: {e}"))?;
+                .set_ignore_cursor_events(false)
+                .map_err(|e| format!("overlay: set_ignore_cursor_events(false) failed: {e}"))?;
             println!(
                 "[jarvis] overlay: FULLSCREEN {}x{}px",
                 mon_size.width, mon_size.height
@@ -156,4 +162,67 @@ pub fn apply_widget_mode(window: &WebviewWindow, mode: WidgetMode) -> Result<(),
 
     *CURRENT_MODE.lock_recover() = mode;
     Ok(())
+}
+
+/// Move the panel to the next monitor in the available-monitors list,
+/// preserving the current widget mode (fullscreen / widget) on the new
+/// screen. Triggered from the top-bar "next screen" button.
+///
+/// If only one monitor is connected, this is a no-op (returns Ok).
+pub fn move_to_next_screen(window: &WebviewWindow) -> Result<(), String> {
+    let monitors = window
+        .available_monitors()
+        .map_err(|e| format!("overlay: list monitors failed: {e}"))?;
+    if monitors.len() <= 1 {
+        return Ok(());
+    }
+
+    let current = window
+        .current_monitor()
+        .map_err(|e| format!("overlay: current monitor failed: {e}"))?
+        .ok_or("overlay: no current monitor")?;
+    let cur_pos = current.position();
+
+    // Pick the next monitor in the list, wrapping around.
+    let mut next_idx = 0usize;
+    for (i, m) in monitors.iter().enumerate() {
+        if m.position() == cur_pos {
+            next_idx = (i + 1) % monitors.len();
+            break;
+        }
+    }
+    let next = &monitors[next_idx];
+    let mode = current_mode();
+
+    let mon_pos = *next.position();
+    let mon_size = *next.size();
+    match mode {
+        WidgetMode::Fullscreen => {
+            let _ = window.set_size(mon_size);
+            let _ = window.set_position(mon_pos);
+        }
+        WidgetMode::Widget => {
+            let scale = next.scale_factor();
+            let widget = (WIDGET_SIZE * scale) as i32;
+            let margin = (WIDGET_MARGIN * scale) as i32;
+            let x = mon_pos.x + mon_size.width as i32 - widget - margin;
+            let y = mon_pos.y + mon_size.height as i32 - widget - margin;
+            let _ = window.set_position(PhysicalPosition::new(x, y));
+        }
+    }
+    println!(
+        "[jarvis] overlay: moved to monitor {} of {}",
+        next_idx + 1,
+        monitors.len()
+    );
+    Ok(())
+}
+
+/// Minimise the panel — hides it without quitting Jarvis. Triggered from
+/// the top-bar minimise button. Re-show by clicking the dock icon or via
+/// the wake hotkey.
+pub fn minimise(window: &WebviewWindow) -> Result<(), String> {
+    window
+        .hide()
+        .map_err(|e| format!("overlay: hide failed: {e}"))
 }

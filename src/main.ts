@@ -82,6 +82,37 @@ async function toggleMode(): Promise<void> {
 // Apply initial mode immediately so the layout is correct before any events.
 applyModeUI("fullscreen");
 
+// --- Top-bar buttons (always visible) ---------------------------------------
+// Close = quit Jarvis. Minimise = hide panel (process keeps running).
+// Next-screen = move panel to the next available monitor.
+function wireTopBar(): void {
+  const close = document.getElementById("tl-close");
+  const min = document.getElementById("tl-min");
+  const screen = document.getElementById("tl-screen");
+  if (close) {
+    close.addEventListener("click", () => {
+      void invoke("close_jarvis").catch((e) =>
+        console.warn("[jarvis] close failed:", e),
+      );
+    });
+  }
+  if (min) {
+    min.addEventListener("click", () => {
+      void invoke("minimise_jarvis").catch((e) =>
+        console.warn("[jarvis] minimise failed:", e),
+      );
+    });
+  }
+  if (screen) {
+    screen.addEventListener("click", () => {
+      void invoke("move_to_next_screen").catch((e) =>
+        console.warn("[jarvis] move screen failed:", e),
+      );
+    });
+  }
+}
+wireTopBar();
+
 // --- Tauri event wiring -----------------------------------------------------
 // `listen` reaches into Tauri internals; in a plain browser (or before the
 // API is ready) that throws. Guard it so the avatar still renders standalone.

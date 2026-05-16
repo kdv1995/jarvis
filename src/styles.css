@@ -21,11 +21,114 @@ body {
 
 /* ── Stage / canvas ──────────────────────────────────────────────── */
 
-/* Transparent passthrough wrapper — holds the canvas + HUD panels. */
+/* Transparent passthrough wrapper — holds the canvas + HUD panels.
+   `pointer-events: none` means clicks on the hologram body / panels do
+   nothing (instead of focusing the webview). Interactive children
+   (the .topbar, .states bar, .panel buttons) re-enable pointer-events
+   locally. */
 .stage {
   position: fixed;
   inset: 0;
   pointer-events: none;
+}
+
+/* ── Top bar ─────────────────────────────────────────────────────────────
+   Always-visible chrome with macOS-style traffic lights on the left and a
+   draggable region (data-tauri-drag-region) in the centre. Sits above the
+   state-badge / trace, so it never gets covered. */
+.topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  background: linear-gradient(
+    180deg,
+    rgba(14, 18, 24, 0.78),
+    rgba(14, 18, 24, 0.55)
+  );
+  border-bottom: 1px solid rgba(196, 212, 232, 0.18);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  z-index: 100;
+  pointer-events: auto; /* override the stage-wide click-through */
+  user-select: none;
+}
+
+/* Traffic-light buttons — colours, hover hint, no native chrome. */
+.traffic-lights {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.tl {
+  appearance: none;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  transition:
+    filter 0.15s,
+    transform 0.08s;
+}
+.tl:hover {
+  filter: brightness(1.12);
+}
+.tl:active {
+  transform: scale(0.92);
+}
+.tl.close {
+  background: #ff5f57;
+}
+.tl.min {
+  background: #febc2e;
+}
+.tl.screen {
+  background: #28c840;
+}
+
+/* Centre drag region — also doubles as the JARVIS label. */
+.topbar-drag {
+  flex: 1;
+  text-align: center;
+  font-family: var(--display);
+  font-size: 11px;
+  letter-spacing: 0.42em;
+  color: rgba(221, 230, 240, 0.7);
+  text-transform: uppercase;
+  cursor: grab;
+  /* The data-tauri-drag-region attribute makes this region initiate native
+     window drag on mousedown — works across screens automatically. */
+}
+.topbar-drag:active {
+  cursor: grabbing;
+}
+.topbar-spacer {
+  width: 60px; /* symmetric padding so JARVIS label stays centred */
+  flex-shrink: 0;
+}
+
+/* Tighter top bar in widget mode (480×480 cramped). */
+body[data-mode="widget"] .topbar {
+  height: 22px;
+  padding: 0 8px;
+}
+body[data-mode="widget"] .topbar-drag {
+  font-size: 9px;
+  letter-spacing: 0.32em;
+}
+body[data-mode="widget"] .tl {
+  width: 10px;
+  height: 10px;
+}
+body[data-mode="widget"] .topbar-spacer {
+  width: 40px;
 }
 
 /* graph.ts mounts <canvas id="hologram-canvas"> inside this. */
@@ -79,7 +182,8 @@ canvas#hologram-canvas {
 
 /* ── Clock (top-right) ───────────────────────────────────────────── */
 .clock {
-  top: 24px;
+  /* Offset by topbar height (28px) + breathing room. */
+  top: 40px;
   right: 24px;
   width: 240px;
 }
@@ -208,7 +312,8 @@ canvas#hologram-canvas {
 
 /* ── Info (top-left) ─────────────────────────────────────────────── */
 .info {
-  top: 24px;
+  /* Offset by topbar height (28px) + breathing room. */
+  top: 40px;
   left: 24px;
   width: 280px;
   font-size: 11px;
@@ -226,7 +331,7 @@ canvas#hologram-canvas {
 .state-badge {
   position: fixed;
   left: 50%;
-  top: 30px;
+  top: 44px;
   transform: translateX(-50%);
   color: var(--c-glow);
   font-family: var(--display);
@@ -257,7 +362,7 @@ canvas#hologram-canvas {
 .trace {
   position: fixed;
   left: 50%;
-  top: 68px;
+  top: 82px;
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
