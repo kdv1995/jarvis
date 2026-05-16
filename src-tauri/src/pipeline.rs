@@ -1397,6 +1397,61 @@ fn try_fast_action(command: &str) -> Option<String> {
         return fast_empty_trash();
     }
 
+    // ── Notes & Reminders (Pack 5) ──────────────────────────────────────
+    // "note that <text>" / "make a note <text>" / "note <text>" — uses the
+    // ORIGINAL command (not lowercased) so the note content keeps proper case.
+    for verb in &[
+        "note that ",
+        "take a note ",
+        "make a note that ",
+        "make a note ",
+        "note ",
+    ] {
+        if cleaned.starts_with(verb) {
+            let orig = command.trim();
+            let orig_lower = orig.to_lowercase();
+            if orig_lower.starts_with(verb) {
+                let content = orig[verb.len()..].trim_end_matches(['.', '?', '!']).trim();
+                if !content.is_empty() {
+                    return fast_create_note(content);
+                }
+            }
+        }
+    }
+
+    // "remind me to <task>" / "remind me to <task> at <time>" / "set a reminder ..."
+    for verb in &["remind me to ", "set a reminder to ", "set a reminder "] {
+        if cleaned.starts_with(verb) {
+            let orig = command.trim();
+            let orig_lower = orig.to_lowercase();
+            if orig_lower.starts_with(verb) {
+                let content = orig[verb.len()..].trim_end_matches(['.', '?', '!']).trim();
+                if !content.is_empty() {
+                    return fast_create_reminder(content);
+                }
+            }
+        }
+    }
+
+    // "add <item> to <list>" — appends to a Reminders list.
+    if let Some(rest) = cleaned.strip_prefix("add ") {
+        if let Some((item, list)) = rest.rsplit_once(" to ") {
+            let orig = command.trim();
+            let orig_lower = orig.to_lowercase();
+            if orig_lower.starts_with("add ") {
+                // Slice the original-case version to preserve item case.
+                if let Some(stripped) = orig[4..].rsplit_once(" to ") {
+                    let item = stripped.0.trim();
+                    let list = stripped.1.trim_end_matches(['.', '?', '!']).trim();
+                    if !item.is_empty() && !list.is_empty() {
+                        return fast_add_to_list(item, list);
+                    }
+                }
+                let _ = (item, list); // suppress unused if early-return missed
+            }
+        }
+    }
+
     None
 }
 
@@ -2230,6 +2285,117 @@ fn fast_empty_trash() -> Option<String> {
     }
 }
 
+// ── Notes & Reminders (Pack 5) ──────────────────────────────────────────
+
+/// Escape a string for safe inclusion in an AppleScript double-quoted literal.
+fn escape_applescript(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn fast_create_note(content: &str) -> Option<String> {
+    let body = escape_applescript(content);
+    // Use the spoken content as both name and body (first line becomes title
+    // automatically in Notes.app — same UX as "New Note" in the menu bar).
+    let script = format!(
+        "tell application \"Notes\" to make new note at folder \"Notes\" \
+         of account \"iCloud\" with properties {{body:\"{body}\"}}"
+    );
+    // Fallback: if iCloud isn't configured, write to the local "On My Mac".
+    let result = run_osascript(&script);
+    if result.is_ok() {
+        let preview = if content.len() > 40 {
+            format!("{}...", &content[..40])
+        } else {
+            content.to_string()
+        };
+        return Some(format!("Noted: {preview}."));
+    }
+    // Try local folder.
+    let fallback = format!(
+        "tell application \"Notes\" to make new note with properties {{body:\"{body}\"}}"
+    );
+    if run_osascript(&fallback).is_ok() {
+        return Some(format!("Noted: {content}."));
+    }
+    Some("Couldn't save the note.".into())
+}
+
+/// Split spoken content into (task, when) by looking for natural-time hints
+/// like " at 3 pm", " tomorrow", " in 30 minutes". Returns (task, Some(when))
+/// or (full content, None) if no time phrase found.
+fn parse_reminder_time(content: &str) -> (String, Option<String>) {
+    let lc = content.to_lowercase();
+    // Markers ordered from most-specific to least-specific. We split on the
+    // FIRST occurrence so "remind me to call mom at 3pm tomorrow" splits at
+    // " at " preserving the rest as the when-clause.
+    for marker in &[
+        " at ", " on ", " by ", " in ", " tomorrow", " tonight", " next ",
+    ] {
+        if let Some(idx) = lc.find(marker) {
+            let task = content[..idx].trim().to_string();
+            let when = content[idx..].trim().to_string();
+            if !task.is_empty() && !when.is_empty() {
+                return (task, Some(when));
+            }
+        }
+    }
+    (content.to_string(), None)
+}
+
+fn fast_create_reminder(content: &str) -> Option<String> {
+    let (task, when) = parse_reminder_time(content);
+    let task_esc = escape_applescript(&task);
+    // We don't parse the when-clause into an actual NSDate — Reminders' own
+    // natural language parsing handles it if we include it in the body via
+    // a Siri-style suggestion. For now, we just embed it in the task name.
+    let full_task = if let Some(ref w) = when {
+        format!("{task} {w}")
+    } else {
+        task.clone()
+    };
+    let full_esc = escape_applescript(&full_task);
+    let script = format!(
+        "tell application \"Reminders\" to make new reminder with properties {{name:\"{full_esc}\"}}"
+    );
+    if run_osascript(&script).is_ok() {
+        Some(match when {
+            Some(w) => format!("Reminder set: {task_esc} {w}.", task_esc = task, w = w),
+            None => format!("Reminder set: {task}."),
+        })
+    } else {
+        Some("Couldn't create the reminder.".into())
+    }
+}
+
+fn fast_add_to_list(item: &str, list: &str) -> Option<String> {
+    let item_esc = escape_applescript(item);
+    let list_esc = escape_applescript(list);
+    // Try to find an existing list by name. If none, fall back to default.
+    let script = format!(
+        "tell application \"Reminders\"\n\
+            try\n\
+                set targetList to list \"{list_esc}\"\n\
+                make new reminder at targetList with properties {{name:\"{item_esc}\"}}\n\
+                return \"ok\"\n\
+            on error\n\
+                make new reminder with properties {{name:\"{item_esc}\"}}\n\
+                return \"default\"\n\
+            end try\n\
+         end tell"
+    );
+    match read_osascript(&script) {
+        Ok(out) => {
+            let out = out.trim();
+            if out == "ok" {
+                Some(format!("Added {item} to {list}."))
+            } else {
+                Some(format!("Added {item} (no list named {list}, used default)."))
+            }
+        }
+        Err(_) => Some("Couldn't add to list.".into()),
+    }
+}
+
 /// Match common ways the user can ask for the morning briefing. Kept tight —
 /// just the phrases that are unambiguously about starting the day.
 fn is_morning_greeting(command: &str) -> bool {
@@ -2982,5 +3148,50 @@ mod tests {
     #[test]
     fn format_modifiers_empty() {
         assert_eq!(super::format_modifiers(""), "");
+    }
+
+    // ----- Notes & Reminders (Pack 5) -----
+
+    #[test]
+    fn escape_applescript_quotes_and_backslashes() {
+        assert_eq!(super::escape_applescript("hello"), "hello");
+        assert_eq!(super::escape_applescript("say \"hi\""), "say \\\"hi\\\"");
+        assert_eq!(super::escape_applescript("c:\\\\path"), "c:\\\\\\\\path");
+    }
+
+    #[test]
+    fn parse_reminder_time_at_clock() {
+        let (task, when) = super::parse_reminder_time("call mom at 3 pm");
+        assert_eq!(task, "call mom");
+        assert_eq!(when.unwrap(), "at 3 pm");
+    }
+
+    #[test]
+    fn parse_reminder_time_tomorrow() {
+        let (task, when) = super::parse_reminder_time("buy milk tomorrow");
+        assert_eq!(task, "buy milk");
+        assert_eq!(when.unwrap(), "tomorrow");
+    }
+
+    #[test]
+    fn parse_reminder_time_in_minutes() {
+        let (task, when) = super::parse_reminder_time("check the oven in 30 minutes");
+        assert_eq!(task, "check the oven");
+        assert_eq!(when.unwrap(), "in 30 minutes");
+    }
+
+    #[test]
+    fn parse_reminder_time_no_time_keeps_full_content() {
+        let (task, when) = super::parse_reminder_time("water the plants");
+        assert_eq!(task, "water the plants");
+        assert!(when.is_none());
+    }
+
+    #[test]
+    fn parse_reminder_time_first_marker_wins() {
+        // "call mom at 3pm tomorrow" — first marker is " at ", which wins
+        let (task, when) = super::parse_reminder_time("call mom at 3 pm tomorrow");
+        assert_eq!(task, "call mom");
+        assert_eq!(when.unwrap(), "at 3 pm tomorrow");
     }
 }
