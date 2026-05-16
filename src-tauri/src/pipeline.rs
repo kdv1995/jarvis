@@ -1142,6 +1142,43 @@ fn try_fast_action(command: &str) -> Option<String> {
         return fast_screenshot();
     }
 
+    // ── File operations (Pack 1) ────────────────────────────────────────
+    // "find <name>" / "find file <name>" / "find document <name>" — Spotlight
+    // mdfind, speak top hit (or count of hits).
+    for verb in &["find file ", "find document ", "find "] {
+        if let Some(name) = cleaned.strip_prefix(verb) {
+            return fast_find_file(name.trim());
+        }
+    }
+    // "open file <name>" / "open document <name>" — find via mdfind, `open` it.
+    for verb in &["open file ", "open document ", "open the file "] {
+        if let Some(name) = cleaned.strip_prefix(verb) {
+            return fast_open_file(name.trim());
+        }
+    }
+    // "create folder <name>" / "make folder <name>" / "new folder <name>" —
+    // creates in ~/Desktop unless "in downloads" / "in documents" suffix.
+    for verb in &[
+        "create folder ",
+        "create a folder ",
+        "make folder ",
+        "make a folder ",
+        "new folder ",
+        "new folder called ",
+        "create a new folder ",
+    ] {
+        if let Some(rest) = cleaned.strip_prefix(verb) {
+            return fast_create_folder(rest.trim());
+        }
+    }
+    // "move <name> to <destination>" — destinations: downloads, desktop,
+    // documents, trash. Source resolved via mdfind.
+    if let Some(rest) = cleaned.strip_prefix("move ") {
+        if let Some((name, dest)) = rest.rsplit_once(" to ") {
+            return fast_move_file(name.trim(), dest.trim());
+        }
+    }
+
     None
 }
 
@@ -1434,6 +1471,174 @@ fn fast_url_search(prefix: &str, query: &str, label: &str) -> Option<String> {
         .map(|s| s.success())
         .unwrap_or(false);
     ok.then(|| format!("Searching {label} for {q}."))
+}
+
+// ── File operations (Pack 1) ────────────────────────────────────────────
+
+/// Spotlight search via `mdfind -name`. Returns up to 5 absolute paths.
+/// Skips Library/ and other system noise to surface user content.
+fn mdfind_user_files(name: &str) -> Vec<String> {
+    let out = match Command::new("/usr/bin/mdfind")
+        .arg("-name")
+        .arg(name)
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let home = std::env::var("HOME").unwrap_or_default();
+    stdout
+        .lines()
+        .filter(|p| {
+            // Filter out system-internal hits; keep things under ~/ that
+            // aren't deep in Library or in Application Support.
+            p.starts_with(&home)
+                && !p.contains("/Library/Caches/")
+                && !p.contains("/Library/Containers/")
+                && !p.contains("/Library/Application Support/")
+                && !p.contains("/.Trash/")
+        })
+        .take(5)
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// Display name of a path: just the basename, without the directory.
+fn basename(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+fn fast_find_file(name: &str) -> Option<String> {
+    if name.is_empty() {
+        return Some("Tell me what to find.".into());
+    }
+    let hits = mdfind_user_files(name);
+    if hits.is_empty() {
+        return Some(format!("Nothing matching {name}."));
+    }
+    if hits.len() == 1 {
+        return Some(format!("Found {}.", basename(&hits[0])));
+    }
+    let names: Vec<&str> = hits.iter().take(3).map(|p| basename(p)).collect();
+    Some(format!(
+        "Found {} matches. Top: {}.",
+        hits.len(),
+        names.join(", ")
+    ))
+}
+
+fn fast_open_file(name: &str) -> Option<String> {
+    if name.is_empty() {
+        return Some("Tell me which file to open.".into());
+    }
+    let hits = mdfind_user_files(name);
+    let path = hits.first()?;
+    let ok = Command::new("/usr/bin/open")
+        .arg(path)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok {
+        Some(format!("Opening {}.", basename(path)))
+    } else {
+        Some(format!("Couldn't open {}.", basename(path)))
+    }
+}
+
+/// Parse "<folder name>" or "<folder name> on desktop" / "in downloads".
+/// Returns (name, parent_dir).
+fn parse_folder_target(input: &str) -> (String, String) {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let desktop = format!("{home}/Desktop");
+    let downloads = format!("{home}/Downloads");
+    let documents = format!("{home}/Documents");
+    let lc = input.to_lowercase();
+    // Look for "on/in <folder>" suffix
+    let split_words = [" on desktop", " in desktop", " in downloads", " on downloads", " in documents", " on documents"];
+    for w in &split_words {
+        if let Some(idx) = lc.rfind(w) {
+            let name = input[..idx].trim().to_string();
+            let dest = if w.contains("desktop") {
+                desktop
+            } else if w.contains("downloads") {
+                downloads
+            } else {
+                documents
+            };
+            return (name, dest);
+        }
+    }
+    // Default: ~/Desktop
+    (input.trim().to_string(), desktop)
+}
+
+fn fast_create_folder(input: &str) -> Option<String> {
+    if input.is_empty() {
+        return Some("What should I name the folder?".into());
+    }
+    let (name, parent) = parse_folder_target(input);
+    if name.is_empty() {
+        return Some("What should I name the folder?".into());
+    }
+    // Reject path traversal — folder name must not contain '/'.
+    if name.contains('/') {
+        return Some("Folder name can't contain a slash.".into());
+    }
+    let path = format!("{parent}/{name}");
+    let ok = Command::new("/bin/mkdir")
+        .arg("-p")
+        .arg(&path)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok {
+        Some(format!("Created folder {name}."))
+    } else {
+        Some(format!("Couldn't create folder {name}."))
+    }
+}
+
+/// Resolve a spoken destination ("downloads" / "trash" / "desktop") to an
+/// absolute path. Returns None for unknown destinations.
+fn resolve_move_dest(dest: &str) -> Option<String> {
+    let home = std::env::var("HOME").ok()?;
+    let lc = dest.to_lowercase();
+    let lc = lc.trim_start_matches("the ").trim();
+    match lc {
+        "downloads" | "the downloads folder" | "downloads folder" => {
+            Some(format!("{home}/Downloads"))
+        }
+        "desktop" | "the desktop" => Some(format!("{home}/Desktop")),
+        "documents" | "the documents folder" => Some(format!("{home}/Documents")),
+        "trash" | "the trash" | "bin" | "the bin" => Some(format!("{home}/.Trash")),
+        _ => None,
+    }
+}
+
+fn fast_move_file(name: &str, dest: &str) -> Option<String> {
+    if name.is_empty() || dest.is_empty() {
+        return Some("Tell me what to move and where.".into());
+    }
+    let dest_path = resolve_move_dest(dest)?;
+    let hits = mdfind_user_files(name);
+    let src = hits.first()?;
+    // Use AppleScript "Finder move" rather than /bin/mv so the destination
+    // gains a proper file animation, and "Trash" works without extra logic.
+    let dest_name = if dest_path.ends_with("/.Trash") {
+        "trash".to_string()
+    } else {
+        format!("folder \"{}\" of (path to home folder)", basename(&dest_path))
+    };
+    let escaped_src = src.replace('"', "\\\"");
+    let script = format!(
+        "tell application \"Finder\" to move (POSIX file \"{escaped_src}\") to {dest_name}"
+    );
+    if run_osascript(&script).is_ok() {
+        Some(format!("Moved {} to {}.", basename(src), dest.trim()))
+    } else {
+        Some(format!("Couldn't move {}.", basename(src)))
+    }
 }
 
 /// Match common ways the user can ask for the morning briefing. Kept tight —
@@ -2069,5 +2274,61 @@ mod tests {
         assert_eq!(v.get("ts").unwrap().as_u64(), Some(ts));
         assert_eq!(v.get("user").unwrap().as_str(), Some(user));
         assert_eq!(v.get("jarvis").unwrap().as_str(), Some(jarvis));
+    }
+
+    // ----- File operations (Pack 1) -----
+
+    #[test]
+    fn basename_strips_directories() {
+        assert_eq!(super::basename("/Users/foo/bar/baz.txt"), "baz.txt");
+        assert_eq!(super::basename("/single"), "single");
+        assert_eq!(super::basename("trailing/"), "");
+        assert_eq!(super::basename("noslash"), "noslash");
+    }
+
+    #[test]
+    fn parse_folder_target_defaults_to_desktop() {
+        let (name, dest) = super::parse_folder_target("Project Alpha");
+        assert_eq!(name, "Project Alpha");
+        assert!(dest.ends_with("/Desktop"));
+    }
+
+    #[test]
+    fn parse_folder_target_honors_in_downloads() {
+        let (name, dest) = super::parse_folder_target("Bills in downloads");
+        assert_eq!(name, "Bills");
+        assert!(dest.ends_with("/Downloads"));
+    }
+
+    #[test]
+    fn parse_folder_target_honors_on_desktop_suffix() {
+        let (name, dest) = super::parse_folder_target("Q4 on desktop");
+        assert_eq!(name, "Q4");
+        assert!(dest.ends_with("/Desktop"));
+    }
+
+    #[test]
+    fn parse_folder_target_in_documents() {
+        let (name, dest) = super::parse_folder_target("Receipts in documents");
+        assert_eq!(name, "Receipts");
+        assert!(dest.ends_with("/Documents"));
+    }
+
+    #[test]
+    fn resolve_move_dest_known_destinations() {
+        // We can't assert paths because $HOME varies, but we can check
+        // each destination resolves to Some.
+        assert!(super::resolve_move_dest("downloads").is_some());
+        assert!(super::resolve_move_dest("the downloads folder").is_some());
+        assert!(super::resolve_move_dest("desktop").is_some());
+        assert!(super::resolve_move_dest("trash").is_some());
+        assert!(super::resolve_move_dest("the bin").is_some());
+        assert!(super::resolve_move_dest("documents").is_some());
+    }
+
+    #[test]
+    fn resolve_move_dest_unknown_returns_none() {
+        assert!(super::resolve_move_dest("a random folder").is_none());
+        assert!(super::resolve_move_dest("").is_none());
     }
 }
