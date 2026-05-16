@@ -128,21 +128,21 @@ pub fn apply_widget_mode(window: &WebviewWindow, mode: WidgetMode) -> Result<(),
 
     match mode {
         WidgetMode::Fullscreen => {
-            let _ = window.set_size(mon_size);
-            let _ = window.set_position(mon_pos);
-            // Interactive so the always-visible top bar (close / minimise /
-            // next-screen / drag handle) can receive clicks. Everything
-            // outside the top bar uses CSS `pointer-events: none` so clicks
-            // on the hologram fall through to the webview background and
-            // are silently consumed. This trades the OS-level click-pass-
-            // through for a discoverable, chrome-style UX — see README.
+            // 70% of monitor, centered — leaves desktop visible around Jarvis
+            // and keeps the custom top bar clearly readable (no menu-bar
+            // overlap, no edge crowding). "Fullscreen" name is now slightly
+            // misleading but we keep it to avoid changing the public enum.
+            let w = (mon_size.width as f64 * 0.70) as u32;
+            let h = (mon_size.height as f64 * 0.70) as u32;
+            let x = mon_pos.x + ((mon_size.width as i32 - w as i32) / 2);
+            let y = mon_pos.y + ((mon_size.height as i32 - h as i32) / 2);
+            let _ = window.set_size(PhysicalSize::new(w, h));
+            let _ = window.set_position(PhysicalPosition::new(x, y));
+            // Interactive so the custom top bar receives clicks.
             window
                 .set_ignore_cursor_events(false)
                 .map_err(|e| format!("overlay: set_ignore_cursor_events(false) failed: {e}"))?;
-            println!(
-                "[jarvis] overlay: FULLSCREEN {}x{}px",
-                mon_size.width, mon_size.height
-            );
+            println!("[jarvis] overlay: NORMAL {w}x{h}px at ({x}, {y}) [70% of monitor]");
         }
         WidgetMode::Widget => {
             let scale = monitor.scale_factor();
