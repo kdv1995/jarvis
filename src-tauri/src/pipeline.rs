@@ -1179,6 +1179,84 @@ fn try_fast_action(command: &str) -> Option<String> {
         }
     }
 
+    // ── Window management (Pack 2) ──────────────────────────────────────
+    // Snap the frontmost window to half of the screen.
+    if matches!(
+        cleaned,
+        "snap left" | "snap to left" | "snap window left" | "window left" | "left half"
+    ) {
+        return fast_snap_window(SnapDir::Left);
+    }
+    if matches!(
+        cleaned,
+        "snap right" | "snap to right" | "snap window right" | "window right" | "right half"
+    ) {
+        return fast_snap_window(SnapDir::Right);
+    }
+    if matches!(
+        cleaned,
+        "snap top" | "snap to top" | "top half"
+    ) {
+        return fast_snap_window(SnapDir::Top);
+    }
+    if matches!(
+        cleaned,
+        "snap bottom" | "snap to bottom" | "bottom half"
+    ) {
+        return fast_snap_window(SnapDir::Bottom);
+    }
+    if matches!(
+        cleaned,
+        "maximize"
+            | "maximize window"
+            | "maximise"
+            | "maximise window"
+            | "full size"
+            | "make it fullscreen"
+            | "fill the screen"
+    ) {
+        return fast_snap_window(SnapDir::Full);
+    }
+    if matches!(cleaned, "center window" | "center the window" | "centre window") {
+        return fast_snap_window(SnapDir::Center);
+    }
+
+    // Minimise / hide controls — apply to the frontmost app, not Jarvis itself.
+    if matches!(
+        cleaned,
+        "minimize" | "minimise" | "minimize this" | "minimize the window" | "minimise the window"
+    ) {
+        return fast_minimize_frontmost();
+    }
+    if matches!(
+        cleaned,
+        "minimize all"
+            | "minimise all"
+            | "minimize everything"
+            | "hide everything"
+            | "minimize all but this"
+    ) {
+        return fast_hide_others();
+    }
+    if matches!(
+        cleaned,
+        "show desktop" | "show the desktop" | "go to desktop"
+    ) {
+        return fast_show_desktop();
+    }
+    if matches!(
+        cleaned,
+        "next window" | "switch window" | "cycle window"
+    ) {
+        return fast_cycle_window(false);
+    }
+    if matches!(
+        cleaned,
+        "previous window" | "previous app" | "last window" | "go back to last window"
+    ) {
+        return fast_cycle_window(true);
+    }
+
     None
 }
 
@@ -1639,6 +1717,147 @@ fn fast_move_file(name: &str, dest: &str) -> Option<String> {
     } else {
         Some(format!("Couldn't move {}.", basename(src)))
     }
+}
+
+// ── Window management (Pack 2) ──────────────────────────────────────────
+
+#[derive(Clone, Copy)]
+enum SnapDir {
+    Left,
+    Right,
+    Top,
+    Bottom,
+    Full,
+    Center,
+}
+
+impl SnapDir {
+    fn label(self) -> &'static str {
+        match self {
+            SnapDir::Left => "left half",
+            SnapDir::Right => "right half",
+            SnapDir::Top => "top half",
+            SnapDir::Bottom => "bottom half",
+            SnapDir::Full => "fullscreen",
+            SnapDir::Center => "centered",
+        }
+    }
+}
+
+/// AppleScript expression that returns (x, y, w, h) of the visible frame of
+/// the screen the frontmost window is on. macOS calls this NSScreen.visibleFrame.
+const FRONTMOST_BOUNDS: &str = "tell application \"Finder\" to get bounds of window of desktop";
+
+fn fast_snap_window(dir: SnapDir) -> Option<String> {
+    // Visible frame = screen minus menu bar and dock. Reading via Finder's
+    // `bounds of window of desktop` returns (left, top, right, bottom).
+    let bounds_text = match read_osascript(FRONTMOST_BOUNDS) {
+        Ok(s) => s,
+        Err(_) => return Some("Couldn't read screen bounds.".into()),
+    };
+    let parts: Vec<i64> = bounds_text
+        .trim()
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
+    if parts.len() != 4 {
+        return Some("Couldn't parse screen bounds.".into());
+    }
+    let (left, top, right, bottom) = (parts[0], parts[1], parts[2], parts[3]);
+    let w = right - left;
+    let h = bottom - top;
+    let (x, y, ww, hh) = match dir {
+        SnapDir::Left => (left, top, w / 2, h),
+        SnapDir::Right => (left + w / 2, top, w / 2, h),
+        SnapDir::Top => (left, top, w, h / 2),
+        SnapDir::Bottom => (left, top + h / 2, w, h / 2),
+        SnapDir::Full => (left, top, w, h),
+        SnapDir::Center => {
+            let cw = w * 70 / 100;
+            let ch = h * 75 / 100;
+            (left + (w - cw) / 2, top + (h - ch) / 2, cw, ch)
+        }
+    };
+    // Set bounds of the frontmost window via System Events. Apps that
+    // disallow window resizing (Finder pop-ups, System Settings) will fail
+    // silently — we still return success since the speech is committed.
+    let script = format!(
+        "tell application \"System Events\" to tell (first process whose frontmost is true) \
+         to tell front window to set {{position, size}} to {{{{{x}, {y}}}, {{{ww}, {hh}}}}}"
+    );
+    if run_osascript(&script).is_ok() {
+        Some(format!("Snapped to {}.", dir.label()))
+    } else {
+        Some(format!("Couldn't snap window to {}.", dir.label()))
+    }
+}
+
+fn fast_minimize_frontmost() -> Option<String> {
+    // Cmd-M is the system-wide minimise shortcut. Works regardless of which
+    // app has focus (as long as it has a window with a minimise button).
+    let script = "tell application \"System Events\" to keystroke \"m\" using {command down}";
+    if run_osascript(script).is_ok() {
+        Some("Minimised.".into())
+    } else {
+        Some("Couldn't minimise.".into())
+    }
+}
+
+fn fast_hide_others() -> Option<String> {
+    // Cmd-Opt-H hides all apps except the frontmost.
+    let script = "tell application \"System Events\" to keystroke \"h\" \
+         using {command down, option down}";
+    if run_osascript(script).is_ok() {
+        Some("Hiding others.".into())
+    } else {
+        Some("Couldn't hide other windows.".into())
+    }
+}
+
+fn fast_show_desktop() -> Option<String> {
+    // F11 (Mission Control: Show Desktop) — also reachable as fn-F11. We use
+    // the System Events `key code 103` which is the dedicated Show Desktop key.
+    let script = "tell application \"System Events\" to key code 103";
+    if run_osascript(script).is_ok() {
+        Some("Showing desktop.".into())
+    } else {
+        Some("Couldn't show desktop.".into())
+    }
+}
+
+fn fast_cycle_window(backward: bool) -> Option<String> {
+    // Cmd-` cycles between windows of the *current* app (forward).
+    // Cmd-Shift-` cycles backward.
+    let script = if backward {
+        "tell application \"System Events\" to keystroke \"`\" \
+         using {command down, shift down}"
+    } else {
+        "tell application \"System Events\" to keystroke \"`\" using {command down}"
+    };
+    if run_osascript(script).is_ok() {
+        Some(if backward {
+            "Previous window.".into()
+        } else {
+            "Next window.".into()
+        })
+    } else {
+        Some("Couldn't switch window.".into())
+    }
+}
+
+/// Like `run_osascript` but captures stdout instead of just status. Used when
+/// we need the AppleScript's return value (e.g. window bounds).
+fn read_osascript(script: &str) -> Result<String, String> {
+    let output = Command::new("/usr/bin/osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|e| format!("osascript failed to launch: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("osascript: {}", stderr.trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// Match common ways the user can ask for the morning briefing. Kept tight —
