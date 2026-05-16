@@ -1257,6 +1257,72 @@ fn try_fast_action(command: &str) -> Option<String> {
         return fast_cycle_window(true);
     }
 
+    // ── Browser deep control (Pack 3) ──────────────────────────────────
+    // URL opening — "open <thing>.com" or "go to <site>" (heuristic).
+    for verb in &["go to ", "navigate to ", "open url ", "visit "] {
+        if let Some(url) = cleaned.strip_prefix(verb) {
+            if let Some(answer) = fast_open_url(url.trim()) {
+                return Some(answer);
+            }
+        }
+    }
+    // Bare "open X.com" / "open X dot com" — only if it looks like a domain.
+    if let Some(rest) = cleaned.strip_prefix("open ") {
+        let rest = rest.trim().trim_start_matches("the ");
+        if looks_like_url(rest) {
+            if let Some(answer) = fast_open_url(rest) {
+                return Some(answer);
+            }
+        }
+    }
+
+    // Tab management — keystroke into the frontmost browser.
+    if matches!(cleaned, "new tab" | "open a new tab" | "open new tab") {
+        return fast_browser_keystroke("t", "command", "New tab.");
+    }
+    if matches!(cleaned, "close tab" | "close this tab" | "close the tab") {
+        return fast_browser_keystroke("w", "command", "Closed.");
+    }
+    if matches!(cleaned, "next tab" | "switch to next tab") {
+        // Cmd-Option-Right
+        return fast_browser_key_code(124, "command,option", "Next tab.");
+    }
+    if matches!(cleaned, "previous tab" | "switch to previous tab" | "last tab") {
+        return fast_browser_key_code(123, "command,option", "Previous tab.");
+    }
+    if matches!(
+        cleaned,
+        "reopen tab" | "reopen the last tab" | "reopen closed tab" | "bring back the tab"
+    ) {
+        return fast_browser_keystroke("t", "command,shift", "Reopened.");
+    }
+
+    // Navigation — back / forward / reload.
+    if matches!(cleaned, "go back" | "back" | "navigate back") {
+        return fast_browser_keystroke("[", "command", "Going back.");
+    }
+    if matches!(cleaned, "go forward" | "forward" | "navigate forward") {
+        return fast_browser_keystroke("]", "command", "Going forward.");
+    }
+    if matches!(
+        cleaned,
+        "reload" | "refresh" | "reload the page" | "refresh the page"
+    ) {
+        return fast_browser_keystroke("r", "command", "Reloading.");
+    }
+    if matches!(
+        cleaned,
+        "hard reload" | "force reload" | "hard refresh"
+    ) {
+        return fast_browser_keystroke("r", "command,shift", "Hard reload.");
+    }
+    if matches!(cleaned, "scroll to top" | "go to top") {
+        return fast_browser_key_code(115, "", "Top.");
+    }
+    if matches!(cleaned, "scroll to bottom" | "go to bottom") {
+        return fast_browser_key_code(119, "", "Bottom.");
+    }
+
     None
 }
 
@@ -1858,6 +1924,110 @@ fn read_osascript(script: &str) -> Result<String, String> {
         return Err(format!("osascript: {}", stderr.trim()));
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+// ── Browser deep control (Pack 3) ───────────────────────────────────────
+
+/// Heuristic: does this spoken text look like a URL or domain?
+/// Accepts: "google.com", "google dot com", "https://...", "github.com/foo".
+fn looks_like_url(text: &str) -> bool {
+    let t = text.trim().to_lowercase();
+    if t.starts_with("http://") || t.starts_with("https://") {
+        return true;
+    }
+    // "X dot Y" pattern from STT (no actual dot)
+    if t.contains(" dot ") {
+        return true;
+    }
+    // Explicit "." with a recognised TLD-ish tail
+    if t.contains('.') {
+        let tld_tail = t.rsplit('.').next().unwrap_or("");
+        let common_tlds = [
+            "com", "org", "net", "io", "co", "ai", "dev", "app", "edu", "gov", "uk", "us", "ua",
+            "eu", "de", "fr", "es", "it", "pl", "ca",
+        ];
+        return common_tlds.iter().any(|t| tld_tail.starts_with(t));
+    }
+    false
+}
+
+/// Normalise a spoken URL: replace " dot " → ".", strip leading "www.",
+/// add https:// scheme if missing.
+fn normalise_spoken_url(text: &str) -> String {
+    let mut t = text.trim().to_lowercase();
+    t = t.replace(" dot ", ".");
+    t = t.replace(" slash ", "/");
+    if !t.starts_with("http://") && !t.starts_with("https://") {
+        t = format!("https://{t}");
+    }
+    t
+}
+
+fn fast_open_url(text: &str) -> Option<String> {
+    if !looks_like_url(text) {
+        return None;
+    }
+    let url = normalise_spoken_url(text);
+    let ok = Command::new("/usr/bin/open")
+        .arg(&url)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok {
+        Some(format!("Opening {url}."))
+    } else {
+        Some(format!("Couldn't open {url}."))
+    }
+}
+
+/// Send a keystroke to the frontmost app (assumed to be a browser). Modifiers
+/// is a comma-separated string like "command" or "command,shift".
+fn fast_browser_keystroke(key: &str, modifiers: &str, response: &'static str) -> Option<String> {
+    let mods = format_modifiers(modifiers);
+    let using = if mods.is_empty() {
+        String::new()
+    } else {
+        format!(" using {{{mods}}}")
+    };
+    // Escape only the special characters AppleScript treats literally inside
+    // the double-quoted keystroke argument. Our keys are single ascii chars
+    // ([ ] r t w m c v etc.), so the escape table is small.
+    let escaped = key.replace('\\', "\\\\").replace('"', "\\\"");
+    let script = format!(
+        "tell application \"System Events\" to keystroke \"{escaped}\"{using}"
+    );
+    if run_osascript(&script).is_ok() {
+        Some(response.into())
+    } else {
+        None
+    }
+}
+
+/// Like `fast_browser_keystroke` but uses `key code N` (numeric scancode) for
+/// keys that can't be typed as text (arrows, function keys, Home, End).
+fn fast_browser_key_code(code: u32, modifiers: &str, response: &'static str) -> Option<String> {
+    let mods = format_modifiers(modifiers);
+    let using = if mods.is_empty() {
+        String::new()
+    } else {
+        format!(" using {{{mods}}}")
+    };
+    let script = format!("tell application \"System Events\" to key code {code}{using}");
+    if run_osascript(&script).is_ok() {
+        Some(response.into())
+    } else {
+        None
+    }
+}
+
+/// "command,shift" → "command down, shift down"
+fn format_modifiers(modifiers: &str) -> String {
+    modifiers
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("{} down", s.trim()))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Match common ways the user can ask for the morning briefing. Kept tight —
@@ -2549,5 +2719,68 @@ mod tests {
     fn resolve_move_dest_unknown_returns_none() {
         assert!(super::resolve_move_dest("a random folder").is_none());
         assert!(super::resolve_move_dest("").is_none());
+    }
+
+    // ----- Browser deep (Pack 3) -----
+
+    #[test]
+    fn looks_like_url_positive_cases() {
+        assert!(super::looks_like_url("google.com"));
+        assert!(super::looks_like_url("google dot com"));
+        assert!(super::looks_like_url("https://example.org"));
+        assert!(super::looks_like_url("http://localhost:1420"));
+        assert!(super::looks_like_url("github.com/user/repo"));
+        assert!(super::looks_like_url("anthropic.ai"));
+    }
+
+    #[test]
+    fn looks_like_url_negative_cases() {
+        assert!(!super::looks_like_url("the weather today"));
+        assert!(!super::looks_like_url("hello world"));
+        assert!(!super::looks_like_url(""));
+        assert!(!super::looks_like_url("file.txt")); // not a known TLD
+    }
+
+    #[test]
+    fn normalise_spoken_url_adds_scheme() {
+        assert_eq!(super::normalise_spoken_url("google.com"), "https://google.com");
+        assert_eq!(
+            super::normalise_spoken_url("https://example.org"),
+            "https://example.org"
+        );
+    }
+
+    #[test]
+    fn normalise_spoken_url_substitutes_dot() {
+        assert_eq!(
+            super::normalise_spoken_url("github dot com"),
+            "https://github.com"
+        );
+    }
+
+    #[test]
+    fn normalise_spoken_url_substitutes_slash() {
+        assert_eq!(
+            super::normalise_spoken_url("github dot com slash anthropic"),
+            "https://github.com/anthropic"
+        );
+    }
+
+    #[test]
+    fn format_modifiers_single() {
+        assert_eq!(super::format_modifiers("command"), "command down");
+    }
+
+    #[test]
+    fn format_modifiers_multiple() {
+        assert_eq!(
+            super::format_modifiers("command,shift"),
+            "command down, shift down"
+        );
+    }
+
+    #[test]
+    fn format_modifiers_empty() {
+        assert_eq!(super::format_modifiers(""), "");
     }
 }
