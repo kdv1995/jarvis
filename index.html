@@ -27,14 +27,20 @@
            events. Each line auto-fades after ~3s. -->
       <div class="trace" id="trace" aria-live="polite"></div>
 
-      <!-- Top left: info -->
+      <!-- Top left: system identity (host, model, OS, uptime, power) -->
       <div class="panel info">
-        <div class="label">// Depth-map driven</div>
-        Real <b>Looking Glass depth map</b> for displacement (white = closer,
-        black = further). Real anatomy, not luminance.
+        <div class="label">// System · Primary unit</div>
+        <div class="meta">
+          <span class="k">Host</span><span class="v" id="sys-host">—</span>
+          <span class="k">Model</span><span class="v" id="sys-model">—</span>
+          <span class="k">OS</span><span class="v" id="sys-os">—</span>
+          <span class="k">User</span><span class="v" id="sys-user">—</span>
+          <span class="k">Uptime</span><span class="v" id="sys-uptime">—</span>
+          <span class="k">Power</span><span class="v" id="sys-power">—</span>
+        </div>
       </div>
 
-      <!-- Top right: clock -->
+      <!-- Top right: clock + environment (date, wifi, battery, front app) -->
       <div class="panel clock">
         <div class="label">// System time · LCL</div>
         <div class="time">
@@ -43,21 +49,20 @@
         </div>
         <div class="meta">
           <span class="k">Date</span><span class="v" id="clock-date">—</span>
-          <span class="k">Uptime</span
-          ><span class="v" id="clock-uptime">00:00:00</span>
-          <span class="k">TZ</span><span class="v" id="clock-tz">—</span>
-          <span class="k">UTC</span><span class="v" id="clock-utc">—</span>
+          <span class="k">WiFi</span><span class="v" id="env-wifi">—</span>
+          <span class="k">Battery</span><span class="v" id="env-battery">—</span>
+          <span class="k">Front app</span><span class="v" id="env-front">—</span>
         </div>
       </div>
 
-      <!-- Bottom right: spectrum -->
+      <!-- Bottom right: audio I/O + live spectrum bars -->
       <div class="panel spectrum">
-        <div class="label">// Audio · Spectrum</div>
+        <div class="label">// Audio · I/O</div>
         <div class="row">
           <span class="hz"
-            ><span id="hz-peak">847</span><span class="unit">Hz</span></span
+            ><span id="hz-peak">0</span><span class="unit">Hz</span></span
           >
-          <span class="db"><span id="hz-db">-48</span> dB · 48 kHz</span>
+          <span class="db"><span id="hz-db">-48</span> dB</span>
         </div>
         <div class="bars" id="spectrum-bars"></div>
         <div class="scale">
@@ -65,33 +70,31 @@
           ><span>2k</span><span>4k</span><span>8k</span><span>16k</span>
         </div>
         <div class="sub">
-          <span id="hz-channel">CH-01 · MONO</span> ·
-          <span id="hz-codec">PCM 16-BIT</span>
+          <span id="audio-input">—</span> · <span id="audio-output">—</span>
         </div>
       </div>
 
-      <!-- Bottom left: signal info -->
+      <!-- Bottom left: live system pulse (CPU, RAM, disk, net) -->
       <div class="panel signal">
-        <div class="label">// Signal</div>
+        <div class="label">// System · Pulse</div>
         <div class="row">
-          <span class="k">Link</span
-          ><span class="v live" id="sig-link">SECURE · NOMINAL</span>
+          <span class="k">CPU</span><span class="v" id="pulse-cpu">—</span>
         </div>
         <div class="row">
-          <span class="k">Latency</span><span class="v" id="sig-lat">14 ms</span>
+          <span class="k">Memory</span><span class="v" id="pulse-mem">—</span>
         </div>
         <div class="row">
-          <span class="k">Jitter</span><span class="v" id="sig-jit">1.8 ms</span>
+          <span class="k">Disk</span><span class="v" id="pulse-disk">—</span>
         </div>
         <div class="row">
-          <span class="k">Bitrate</span
-          ><span class="v" id="sig-br">512 kbps</span>
+          <span class="k">Net in</span><span class="v" id="pulse-net-in">—</span>
         </div>
         <div class="row">
-          <span class="k">Phonemes</span><span class="v" id="sig-ph">0</span>
+          <span class="k">Net out</span
+          ><span class="v" id="pulse-net-out">—</span>
         </div>
         <div class="row">
-          <span class="k">Mouth</span><span class="v" id="sig-mouth">0.00</span>
+          <span class="k">Mic level</span><span class="v" id="pulse-mic">—</span>
         </div>
       </div>
 

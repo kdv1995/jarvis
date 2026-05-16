@@ -315,6 +315,26 @@ impl Engine {
             }
         }
 
+        // --- System telemetry fast-path -------------------------------------
+        // "what's my battery", "cpu usage", "memory", "wifi", "uptime" —
+        // answered straight from the snapshot the HUD already polls. ~20ms.
+        if let Some(answer) = crate::sysinfo::try_answer_system_query(&command) {
+            println!("[pipeline] SYS-INFO FAST PATH — {}", answer);
+            self.emit_state("speaking");
+            let _ = self
+                .app
+                .emit("hud://caption", json!({ "text": &answer, "final": false }));
+            if let Err(e) = tts::speak_sentence(&answer, &self.app, &self.tts_child) {
+                eprintln!("[jarvis] sys-info tts error: {e}");
+            }
+            let _ = self
+                .app
+                .emit("hud://caption", json!({ "text": &answer, "final": true }));
+            self.remember_turn(&command, &answer);
+            self.set_mode(Mode::AwaitingCommand);
+            return;
+        }
+
         // --- Fast path: skip the brain entirely for the 80% case -------------
         // Common voice verbs ("open X", "close X", "what time") don't need a
         // 200B-parameter model to figure out. Pattern-match in Rust, run the

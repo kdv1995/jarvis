@@ -11,6 +11,7 @@ mod config;
 mod pipeline;
 mod state;
 mod stt;
+mod sysinfo;
 mod tts;
 mod vad;
 
@@ -129,7 +130,8 @@ pub fn run() {
             commands::start_recording,
             commands::stop_and_process,
             commands::tts_voice,
-            commands::set_widget_mode
+            commands::set_widget_mode,
+            commands::get_system_snapshot
         ])
         .setup(move |app| {
             #[cfg(target_os = "macos")]

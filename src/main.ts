@@ -17,6 +17,7 @@ import {
   destroyPanels,
   appendTraceLine,
 } from "./hud/panels";
+import { initSysinfo, stopSysinfo } from "./hud/sysinfo";
 import type { HudState, StatePayload, AmplitudePayload } from "./types";
 
 type WidgetMode = "fullscreen" | "widget";
@@ -29,6 +30,11 @@ initGraph(hudContainer);
 // `initPanels` gets `setAssistantState` so the on-screen state buttons (live
 // in the browser dev preview) drive both the hologram and the HUD chrome.
 initPanels(setAssistantState);
+
+// Real system telemetry — polls Rust `get_system_snapshot` every 500 ms and
+// renders host / model / OS / battery / WiFi / CPU / RAM / disk / net into
+// the four corner panels. Replaces the demo's mock values.
+initSysinfo();
 
 // One entry point that drives both the 3D avatar and the HUD chrome.
 function setAssistantState(state: HudState): void {
@@ -122,6 +128,7 @@ if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     destroyGraph();
     destroyPanels();
+    stopSysinfo();
   });
 }
 

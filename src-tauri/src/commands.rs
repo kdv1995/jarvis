@@ -60,3 +60,13 @@ pub fn set_widget_mode(app: AppHandle, mode: String) -> Result<(), String> {
     }
     Ok(())
 }
+
+
+/// Returns a fresh system telemetry snapshot for the HUD panels.
+///
+/// Frontend calls this every 500 ms. Internally caches expensive shell-outs
+/// (battery, WiFi) to 5-second intervals — the call itself is cheap.
+#[tauri::command]
+pub fn get_system_snapshot() -> crate::sysinfo::SystemSnapshot {
+    crate::sysinfo::snapshot()
+}
