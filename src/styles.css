@@ -1,0 +1,445 @@
+/* Jarvis HUD — depth-map holographic portrait theme.
+   Ported from the standalone `hologram-depth.html` demo, adapted for the
+   fullscreen, click-through Tauri overlay. */
+
+:root {
+  --c-glow: #c4d4e8;
+  --c-warn: #a8b8c8;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --display: "Orbitron", var(--mono);
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: #040608;
+  overflow: hidden;
+  font-family: var(--mono);
+  color: #dde6f0;
+}
+
+/* ── Stage / canvas ──────────────────────────────────────────────── */
+
+/* Transparent passthrough wrapper — holds the canvas + HUD panels. */
+.stage {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* graph.ts mounts <canvas id="hologram-canvas"> inside this. */
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+canvas#hologram-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+/* ── HUD shells ──────────────────────────────────────────────────── */
+.panel {
+  position: fixed;
+  background: linear-gradient(
+    180deg,
+    rgba(20, 26, 34, 0.5),
+    rgba(14, 18, 24, 0.45)
+  );
+  border: 1px solid rgba(196, 212, 232, 0.35);
+  padding: 12px 14px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow:
+    inset 0 0 30px rgba(196, 212, 232, 0.06),
+    0 0 28px rgba(58, 71, 84, 0.22);
+  z-index: 10;
+  pointer-events: none;
+}
+.panel .label {
+  color: rgba(196, 212, 232, 0.7);
+  font-size: 9px;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.panel .sub {
+  color: rgba(221, 230, 240, 0.55);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  margin-top: 6px;
+}
+
+/* ── Clock (top-right) ───────────────────────────────────────────── */
+.clock {
+  top: 24px;
+  right: 24px;
+  width: 240px;
+}
+.clock .time {
+  font-family: var(--display);
+  font-size: 32px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.1em;
+  text-shadow: 0 0 14px rgba(196, 212, 232, 0.55);
+  line-height: 1;
+}
+.clock .time .ms {
+  font-size: 16px;
+  color: rgba(221, 230, 240, 0.55);
+  margin-left: 4px;
+  letter-spacing: 0.04em;
+}
+.clock .meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 14px;
+  margin-top: 12px;
+  font-size: 10px;
+}
+.clock .meta .k {
+  color: rgba(221, 230, 240, 0.5);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.clock .meta .v {
+  color: #e8eef5;
+  font-family: var(--display);
+  letter-spacing: 0.05em;
+}
+
+/* ── Spectrum (bottom-right) ─────────────────────────────────────── */
+.spectrum {
+  bottom: 100px;
+  right: 24px;
+  width: 320px;
+}
+.spectrum .row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+.spectrum .row .hz {
+  font-family: var(--display);
+  font-size: 18px;
+  color: #fff;
+  letter-spacing: 0.06em;
+  text-shadow: 0 0 10px rgba(196, 212, 232, 0.5);
+}
+.spectrum .row .hz .unit {
+  font-size: 11px;
+  color: rgba(221, 230, 240, 0.5);
+  margin-left: 4px;
+}
+.spectrum .row .db {
+  font-family: var(--display);
+  font-size: 12px;
+  color: var(--c-warn);
+  letter-spacing: 0.08em;
+}
+.spectrum .bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 56px;
+  padding-top: 2px;
+}
+.spectrum .bar {
+  flex: 1;
+  background: linear-gradient(
+    180deg,
+    #dde6f0 0%,
+    var(--c-glow) 40%,
+    #3a4754 100%
+  );
+  box-shadow: 0 0 6px rgba(196, 212, 232, 0.5);
+  transition:
+    height 80ms linear,
+    opacity 80ms linear;
+  min-height: 2px;
+}
+.spectrum .scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  color: rgba(221, 230, 240, 0.45);
+  font-size: 8px;
+  letter-spacing: 0.16em;
+}
+
+/* ── Signal info (bottom-left) ───────────────────────────────────── */
+.signal {
+  bottom: 100px;
+  left: 24px;
+  width: 240px;
+}
+.signal .row {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+  font-size: 10px;
+}
+.signal .row .k {
+  color: rgba(221, 230, 240, 0.5);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.signal .row .v {
+  color: #e8eef5;
+  font-family: var(--display);
+  letter-spacing: 0.05em;
+}
+.signal .row .v.warn {
+  color: var(--c-warn);
+}
+.signal .row .v.live {
+  color: #9affb0;
+  text-shadow: 0 0 8px rgba(154, 255, 176, 0.45);
+}
+
+/* ── Info (top-left) ─────────────────────────────────────────────── */
+.info {
+  top: 24px;
+  left: 24px;
+  width: 280px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.info b {
+  color: #fff;
+}
+.info code {
+  color: var(--c-warn);
+  font-size: 10px;
+}
+
+/* ── State badge (top-center) ────────────────────────────────────── */
+.state-badge {
+  position: fixed;
+  left: 50%;
+  top: 30px;
+  transform: translateX(-50%);
+  color: var(--c-glow);
+  font-family: var(--display);
+  font-size: 13px;
+  letter-spacing: 0.42em;
+  text-transform: uppercase;
+  pointer-events: none;
+  text-shadow: 0 0 14px rgba(196, 212, 232, 0.6);
+  z-index: 10;
+}
+.state-badge .dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  background: var(--c-glow);
+  border-radius: 50%;
+  box-shadow: 0 0 12px var(--c-glow);
+  margin-right: 14px;
+  vertical-align: middle;
+}
+
+/* ── Trace stack (top-center, under the state badge) ──────────────────
+   Live feed of what the agent is doing — tool calls and results pushed
+   from the streaming pipeline via `hud://trace` events. Each line fades
+   in, lingers ~3s, fades out. The stack is non-interactive (pointer-
+   events: none) so it doesn't intercept clicks in widget mode. */
+
+.trace {
+  position: fixed;
+  left: 50%;
+  top: 68px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  max-width: 520px;
+  pointer-events: none;
+  z-index: 9;
+}
+.trace-line {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(221, 230, 240, 0.85);
+  background: rgba(14, 18, 24, 0.55);
+  border: 1px solid rgba(196, 212, 232, 0.35);
+  padding: 4px 12px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  opacity: 0;
+  transform: translateY(-6px);
+  transition:
+    opacity 0.4s ease,
+    transform 0.4s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.trace-line.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.trace-line.trace-use {
+  color: #e8eef5;
+  border-color: rgba(196, 212, 232, 0.55);
+  text-shadow: 0 0 8px rgba(196, 212, 232, 0.4);
+}
+.trace-line.trace-ok {
+  color: #9affb0;
+  border-color: rgba(154, 255, 176, 0.55);
+  text-shadow: 0 0 6px rgba(154, 255, 176, 0.35);
+}
+.trace-line.trace-error {
+  color: var(--c-warn);
+  border-color: rgba(168, 184, 200, 0.55);
+}
+
+/* Trace is irrelevant chrome in widget mode — hide it. */
+body[data-mode="widget"] .trace {
+  display: none;
+}
+
+/* ── State switcher (bottom-center) ──────────────────────────────────
+   pointer-events:auto so it's clickable in the browser dev preview for
+   testing; the Tauri overlay is click-through at the OS (NSPanel) level,
+   so it stays inert there regardless. */
+.states {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  background: rgba(14, 18, 24, 0.55);
+  border: 1px solid rgba(196, 212, 232, 0.35);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 10;
+  pointer-events: auto;
+}
+.states button {
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  color: rgba(221, 230, 240, 0.7);
+  font: 11px/1 var(--mono);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    border-color 0.15s,
+    background 0.15s;
+}
+.states button:hover {
+  color: #fff;
+}
+.states button[aria-current="true"] {
+  color: #fff;
+  border-color: rgba(196, 212, 232, 0.7);
+  background: rgba(196, 212, 232, 0.12);
+  box-shadow: 0 0 16px rgba(196, 212, 232, 0.25);
+}
+
+/* Tighten on small screens (e.g. a narrow browser preview window). */
+@media (max-width: 820px) {
+  .info,
+  .signal {
+    display: none;
+  }
+  .clock,
+  .spectrum {
+    width: 200px;
+  }
+}
+
+/* ── Mode-toggle button (in the .states group) ────────────────────────
+   Lives next to the state-switcher and flips the HUD between fullscreen
+   and the bottom-right widget. Visible in both modes; clickable in widget
+   mode (the OS-level click-through is off there) and via ⌃⌥J anywhere. */
+
+.states-divider {
+  display: inline-block;
+  width: 1px;
+  align-self: stretch;
+  background: rgba(196, 212, 232, 0.4);
+  margin: 0 4px;
+}
+
+.mode-toggle {
+  appearance: none;
+  background: transparent;
+  border: 1px solid rgba(196, 212, 232, 0.4);
+  color: rgba(221, 230, 240, 0.85);
+  font: 11px/1 var(--mono);
+  letter-spacing: 0.22em;
+  padding: 8px 12px;
+  cursor: pointer;
+  text-transform: uppercase;
+  transition:
+    color 0.15s,
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.mode-toggle:hover {
+  color: #fff;
+  border-color: rgba(196, 212, 232, 0.7);
+  background: rgba(196, 212, 232, 0.12);
+}
+
+/* ── Fullscreen mode top bar ──────────────────────────────────────────
+   Hide the top-of-screen chrome (info panel, state badge, clock) in
+   fullscreen so the avatar dominates and only the bottom telemetry +
+   state controls remain. */
+
+body[data-mode="fullscreen"] .info,
+body[data-mode="fullscreen"] .state-badge,
+body[data-mode="fullscreen"] .clock {
+  display: none;
+}
+
+/* ── Widget mode (480×480 bottom-right) ───────────────────────────────
+   Hide the chrome that doesn't fit a 480-px square. The hologram fills the
+   window and the .states bar stays at the bottom as the only HUD control. */
+
+body[data-mode="widget"] .info,
+body[data-mode="widget"] .clock,
+body[data-mode="widget"] .spectrum,
+body[data-mode="widget"] .signal,
+body[data-mode="widget"] .state-badge {
+  display: none;
+}
+
+/* Compact the bottom controls so all 4 state buttons + toggle fit in 480px. */
+body[data-mode="widget"] .states {
+  bottom: 14px;
+  gap: 3px;
+  padding: 4px;
+}
+
+body[data-mode="widget"] .states button,
+body[data-mode="widget"] .mode-toggle {
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  padding: 6px 8px;
+}
+
+body[data-mode="widget"] .states-divider {
+  margin: 0 2px;
+}

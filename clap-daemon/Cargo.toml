@@ -1,0 +1,16 @@
+[package]
+name = "jarvis-clap-daemon"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "jarvis-clap-daemon"
+path = "src/main.rs"
+
+[dependencies]
+cpal = "0.16"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true

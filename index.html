@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@500;700;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <title>Jarvis</title>
+  </head>
+  <body>
+    <div class="stage" id="stage" data-state="idle">
+      <!-- Three.js depth-hologram canvas is created inside #hud by graph.ts -->
+      <div id="hud"></div>
+
+      <!-- Top center: live state -->
+      <div class="state-badge">
+        <span class="dot"></span><span id="state-name">IDLE</span>
+      </div>
+
+      <!-- Top center, below state badge: live trace of agent tool calls.
+           Populated by `appendTraceLine()` in panels.ts from `hud://trace`
+           events. Each line auto-fades after ~3s. -->
+      <div class="trace" id="trace" aria-live="polite"></div>
+
+      <!-- Top left: info -->
+      <div class="panel info">
+        <div class="label">// Depth-map driven</div>
+        Real <b>Looking Glass depth map</b> for displacement (white = closer,
+        black = further). Real anatomy, not luminance.
+      </div>
+
+      <!-- Top right: clock -->
+      <div class="panel clock">
+        <div class="label">// System time · LCL</div>
+        <div class="time">
+          <span id="clock-time">00:00:00</span
+          ><span class="ms" id="clock-ms">.000</span>
+        </div>
+        <div class="meta">
+          <span class="k">Date</span><span class="v" id="clock-date">—</span>
+          <span class="k">Uptime</span
+          ><span class="v" id="clock-uptime">00:00:00</span>
+          <span class="k">TZ</span><span class="v" id="clock-tz">—</span>
+          <span class="k">UTC</span><span class="v" id="clock-utc">—</span>
+        </div>
+      </div>
+
+      <!-- Bottom right: spectrum -->
+      <div class="panel spectrum">
+        <div class="label">// Audio · Spectrum</div>
+        <div class="row">
+          <span class="hz"
+            ><span id="hz-peak">847</span><span class="unit">Hz</span></span
+          >
+          <span class="db"><span id="hz-db">-48</span> dB · 48 kHz</span>
+        </div>
+        <div class="bars" id="spectrum-bars"></div>
+        <div class="scale">
+          <span>80</span><span>250</span><span>500</span><span>1k</span
+          ><span>2k</span><span>4k</span><span>8k</span><span>16k</span>
+        </div>
+        <div class="sub">
+          <span id="hz-channel">CH-01 · MONO</span> ·
+          <span id="hz-codec">PCM 16-BIT</span>
+        </div>
+      </div>
+
+      <!-- Bottom left: signal info -->
+      <div class="panel signal">
+        <div class="label">// Signal</div>
+        <div class="row">
+          <span class="k">Link</span
+          ><span class="v live" id="sig-link">SECURE · NOMINAL</span>
+        </div>
+        <div class="row">
+          <span class="k">Latency</span><span class="v" id="sig-lat">14 ms</span>
+        </div>
+        <div class="row">
+          <span class="k">Jitter</span><span class="v" id="sig-jit">1.8 ms</span>
+        </div>
+        <div class="row">
+          <span class="k">Bitrate</span
+          ><span class="v" id="sig-br">512 kbps</span>
+        </div>
+        <div class="row">
+          <span class="k">Phonemes</span><span class="v" id="sig-ph">0</span>
+        </div>
+        <div class="row">
+          <span class="k">Mouth</span><span class="v" id="sig-mouth">0.00</span>
+        </div>
+      </div>
+
+      <!-- Bottom center: state switcher + fullscreen↔widget toggle.
+           Clickable in widget mode (window is interactive) and in the browser
+           preview. Inert in the fullscreen click-through overlay — use the
+           ⌃⌥J global hotkey there. -->
+      <div class="states" role="tablist" aria-label="Hologram state">
+        <button data-state="idle" aria-current="true">Idle</button>
+        <button data-state="listening">Listening</button>
+        <button data-state="speaking">Speaking</button>
+        <button data-state="thinking">Thinking</button>
+        <span class="states-divider" aria-hidden="true"></span>
+        <button
+          id="mode-toggle"
+          class="mode-toggle"
+          aria-label="Collapse to widget"
+          title="Toggle widget / fullscreen (⌃⌥J)"
+        ><span id="mode-toggle-label">MIN</span></button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
