@@ -2023,18 +2023,21 @@ fn fast_move_file(name: &str, dest: &str) -> Option<String> {
     let dest_path = resolve_move_dest(dest)?;
     let hits = mdfind_user_files(name);
     let src = hits.first()?;
-    // Use AppleScript "Finder move" rather than /bin/mv so the destination
-    // gains a proper file animation, and "Trash" works without extra logic.
-    let dest_name = if dest_path.ends_with("/.Trash") {
+    // Pass the source path through argv (Spotlight could in theory return a
+    // path with embedded `"` or newline that would break inline quoting).
+    // Destination is a fixed token chosen from a closed set — safe inline.
+    let dest_token = if dest_path.ends_with("/.Trash") {
         "trash".to_string()
     } else {
         format!("folder \"{}\" of (path to home folder)", basename(&dest_path))
     };
-    let escaped_src = src.replace('"', "\\\"");
     let script = format!(
-        "tell application \"Finder\" to move (POSIX file \"{escaped_src}\") to {dest_name}"
+        r#"on run argv
+            set srcPath to item 1 of argv
+            tell application "Finder" to move (POSIX file srcPath) to {dest_token}
+        end run"#
     );
-    if run_osascript(&script).is_ok() {
+    if run_osascript_with_args(&script, &[src]).is_ok() {
         Some(format!("Moved {} to {}.", basename(src), dest.trim()))
     } else {
         Some(format!("Couldn't move {}.", basename(src)))
@@ -2420,29 +2423,28 @@ fn escape_applescript(s: &str) -> String {
 }
 
 fn fast_create_note(content: &str) -> Option<String> {
-    let body = escape_applescript(content);
-    // Use the spoken content as both name and body (first line becomes title
-    // automatically in Notes.app — same UX as "New Note" in the menu bar).
-    let script = format!(
-        "tell application \"Notes\" to make new note at folder \"Notes\" \
-         of account \"iCloud\" with properties {{body:\"{body}\"}}"
-    );
-    // Fallback: if iCloud isn't configured, write to the local "On My Mac".
-    let result = run_osascript(&script);
+    // Security: pass user content as an AppleScript argv item so that
+    // newlines, quotes, or `}` in the spoken text cannot break out of the
+    // {body:"..."} record into the surrounding `tell` block. Previous
+    // implementation used inline string interpolation with only \ and "
+    // escaped — a CRITICAL injection vector for AppleScript→shell pivot.
+    let script = r#"on run argv
+        set noteBody to item 1 of argv
+        try
+            tell application "Notes" to make new note at folder "Notes" of account "iCloud" with properties {body:noteBody}
+        on error
+            tell application "Notes" to make new note with properties {body:noteBody}
+        end try
+    end run"#;
+    let result = run_osascript_with_args(script, &[content]);
     if result.is_ok() {
-        let preview = if content.len() > 40 {
-            format!("{}...", &content[..40])
+        let preview = if content.chars().count() > 40 {
+            // Use char-safe slicing — Cyrillic / emoji can panic on byte slice.
+            content.chars().take(40).collect::<String>() + "..."
         } else {
             content.to_string()
         };
         return Some(format!("Noted: {preview}."));
-    }
-    // Try local folder.
-    let fallback = format!(
-        "tell application \"Notes\" to make new note with properties {{body:\"{body}\"}}"
-    );
-    if run_osascript(&fallback).is_ok() {
-        return Some(format!("Noted: {content}."));
     }
     Some("Couldn't save the note.".into())
 }
@@ -2471,22 +2473,20 @@ fn parse_reminder_time(content: &str) -> (String, Option<String>) {
 
 fn fast_create_reminder(content: &str) -> Option<String> {
     let (task, when) = parse_reminder_time(content);
-    let task_esc = escape_applescript(&task);
-    // We don't parse the when-clause into an actual NSDate — Reminders' own
-    // natural language parsing handles it if we include it in the body via
-    // a Siri-style suggestion. For now, we just embed it in the task name.
     let full_task = if let Some(ref w) = when {
         format!("{task} {w}")
     } else {
         task.clone()
     };
-    let full_esc = escape_applescript(&full_task);
-    let script = format!(
-        "tell application \"Reminders\" to make new reminder with properties {{name:\"{full_esc}\"}}"
-    );
-    if run_osascript(&script).is_ok() {
+    // Security: user-controlled `full_task` flows through argv so newlines /
+    // `}` can't break out of the `{name:"..."}` record.
+    let script = r#"on run argv
+        set t to item 1 of argv
+        tell application "Reminders" to make new reminder with properties {name:t}
+    end run"#;
+    if run_osascript_with_args(script, &[&full_task]).is_ok() {
         Some(match when {
-            Some(w) => format!("Reminder set: {task_esc} {w}.", task_esc = task, w = w),
+            Some(w) => format!("Reminder set: {task} {w}."),
             None => format!("Reminder set: {task}."),
         })
     } else {
@@ -2495,22 +2495,24 @@ fn fast_create_reminder(content: &str) -> Option<String> {
 }
 
 fn fast_add_to_list(item: &str, list: &str) -> Option<String> {
-    let item_esc = escape_applescript(item);
-    let list_esc = escape_applescript(list);
-    // Try to find an existing list by name. If none, fall back to default.
-    let script = format!(
-        "tell application \"Reminders\"\n\
-            try\n\
-                set targetList to list \"{list_esc}\"\n\
-                make new reminder at targetList with properties {{name:\"{item_esc}\"}}\n\
-                return \"ok\"\n\
-            on error\n\
-                make new reminder with properties {{name:\"{item_esc}\"}}\n\
-                return \"default\"\n\
-            end try\n\
-         end tell"
-    );
-    match read_osascript(&script) {
+    // Security: item AND list pass through argv (script writer's worst-case
+    // is that a malicious list name like 'foo" \nshutdown' is harmless inside
+    // a runtime string, never AppleScript source).
+    let script = r#"on run argv
+        set i to item 1 of argv
+        set l to item 2 of argv
+        tell application "Reminders"
+            try
+                set targetList to list l
+                make new reminder at targetList with properties {name:i}
+                return "ok"
+            on error
+                make new reminder with properties {name:i}
+                return "default"
+            end try
+        end tell
+    end run"#;
+    match read_osascript_with_args(script, &[item, list]) {
         Ok(out) => {
             let out = out.trim();
             if out == "ok" {
@@ -2762,6 +2764,54 @@ fn run_osascript(script: &str) -> Result<(), String> {
         return Err(format!("osascript: {}", stderr.trim()));
     }
     Ok(())
+}
+
+/// Run an AppleScript with user-supplied content passed through argv instead
+/// of inline string interpolation. This is the injection-safe equivalent of
+/// `run_osascript` for cases where untrusted text (spoken notes, reminder
+/// names, list items) is part of the script payload.
+///
+/// The script can reference args via `item N of argv`. We use osascript's
+/// trailing-positional syntax: `osascript -e "<script>" -- arg1 arg2 ...`.
+/// Newlines / quotes / `}` in the args cannot break out of any AppleScript
+/// quoted-string context because the args never become AppleScript source —
+/// they're read into a runtime string by the AS interpreter.
+fn run_osascript_with_args(script: &str, args: &[&str]) -> Result<(), String> {
+    let mut cmd = Command::new("/usr/bin/osascript");
+    cmd.arg("-e").arg(script);
+    // osascript treats everything after "--" as positional args, accessible
+    // inside the script via `on run argv` / `item N of argv`.
+    cmd.arg("--");
+    for a in args {
+        cmd.arg(a);
+    }
+    let output = cmd
+        .output()
+        .map_err(|e| format!("osascript failed to launch: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("osascript: {}", stderr.trim()));
+    }
+    Ok(())
+}
+
+/// Capture-stdout variant of `run_osascript_with_args`. Same injection-safety
+/// guarantee; use when the script `return`s a value we need to read.
+fn read_osascript_with_args(script: &str, args: &[&str]) -> Result<String, String> {
+    let mut cmd = Command::new("/usr/bin/osascript");
+    cmd.arg("-e").arg(script);
+    cmd.arg("--");
+    for a in args {
+        cmd.arg(a);
+    }
+    let output = cmd
+        .output()
+        .map_err(|e| format!("osascript failed to launch: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("osascript: {}", stderr.trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// Dictation prefixes — longest first so "claude code" wins over "claude".

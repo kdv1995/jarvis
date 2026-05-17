@@ -1,0 +1,6 @@
+# Pins the Rust toolchain so contributors and CI build with the same compiler.
+# Update by hand when bumping; rustup will auto-install on first cargo invocation.
+[toolchain]
+channel = "1.83.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
