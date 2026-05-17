@@ -42,18 +42,24 @@
         <div class="topbar-spacer"></div>
       </div>
 
-      <!-- Three.js depth-hologram canvas is created inside #hud by graph.ts -->
-      <div id="hud"></div>
+      <!-- Three.js depth-hologram canvas is created inside #hud by graph.ts.
+           role="img" + aria-label tells screen readers it's decorative; without
+           this, VoiceOver announces a meaningless canvas blob. -->
+      <div id="hud" role="img" aria-label="Jarvis holographic portrait (decorative)"></div>
 
-      <!-- Top center: live state -->
-      <div class="state-badge">
-        <span class="dot"></span><span id="state-name">IDLE</span>
+      <!-- Top center: live state. aria-live=polite + atomic ensures
+           VoiceOver announces every state transition (idle→listening→thinking
+           →speaking) without interrupting other speech. -->
+      <div class="state-badge" role="status" aria-live="polite" aria-atomic="true">
+        <span class="dot" aria-hidden="true"></span><span id="state-name">IDLE</span>
       </div>
 
       <!-- Top center, below state badge: live trace of agent tool calls.
            Populated by `appendTraceLine()` in panels.ts from `hud://trace`
-           events. Each line auto-fades after ~3s. -->
-      <div class="trace" id="trace" aria-live="polite"></div>
+           events. Each line auto-fades after ~3s. aria-live=off because
+           every tool call would otherwise spam the screen reader — trace
+           is visual chrome only. -->
+      <div class="trace" id="trace" aria-live="off"></div>
 
       <!-- Top left: system identity (host, model, OS, uptime, power) -->
       <div class="panel info">

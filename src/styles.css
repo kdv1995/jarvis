@@ -5,8 +5,19 @@
 :root {
   --c-glow: #c4d4e8;
   --c-warn: #a8b8c8;
+  /* Brand red — reserved for ACTIVE/ALERT state only (recording dot,
+     errors), never used for default chrome (would conflict with the cool
+     silver-blue hologram aesthetic). */
+  --c-brand: #ff3333;
   --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
   --display: "Orbitron", var(--mono);
+
+  /* Layout tokens — single source of truth for chrome offsets.
+     Change one and every dependent fixed-position element re-flows. */
+  --safe-top: env(safe-area-inset-top, 38px); /* macOS menu bar + notch */
+  --chrome-h: 36px;                            /* topbar height */
+  --gutter: 12px;                              /* breathing room below chrome */
+  --panel-top: calc(var(--safe-top) + var(--chrome-h) + var(--gutter));
 }
 
 html,
@@ -17,6 +28,41 @@ body {
   overflow: hidden;
   font-family: var(--mono);
   color: #dde6f0;
+}
+
+/* ── A11y: visible keyboard focus ─────────────────────────────────────
+   `outline: none` was set on .tl / .screen-jump for a "clean" look but
+   that's a WCAG 2.4.7 violation — keyboard users get no focus indicator.
+   :focus-visible only fires on keyboard nav (not mouse), so we keep the
+   clean mouse appearance while remaining accessible. */
+:focus-visible {
+  outline: 2px solid var(--c-glow);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+button:focus-visible {
+  outline: 2px solid var(--c-glow);
+  outline-offset: 2px;
+}
+
+/* Active recording / listening — brand red dot for unambiguous "live"
+   indicator. Only the dot turns red; the rest of the chrome stays
+   silver-blue to preserve the hologram aesthetic. */
+.stage[data-state="listening"] .state-badge .dot {
+  background: var(--c-brand);
+  box-shadow: 0 0 14px var(--c-brand);
+  animation: jarvis-pulse 1.4s ease-in-out infinite;
+}
+@keyframes jarvis-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 12px var(--c-brand);
+  }
+  50% {
+    transform: scale(1.2);
+    box-shadow: 0 0 18px var(--c-brand);
+  }
 }
 
 /* ── Stage / canvas ──────────────────────────────────────────────── */
@@ -220,8 +266,9 @@ canvas#hologram-canvas {
 
 /* ── Clock (top-right) ───────────────────────────────────────────── */
 .clock {
-  /* macOS menu bar (~38px) + topbar (28px) + breathing room (12px). */
-  top: 78px;
+  /* Single token (--panel-top) keeps every top-anchored panel in sync
+     when chrome height or safe-area changes. */
+  top: var(--panel-top);
   right: 24px;
   width: 240px;
 }
@@ -350,8 +397,7 @@ canvas#hologram-canvas {
 
 /* ── Info (top-left) ─────────────────────────────────────────────── */
 .info {
-  /* macOS menu bar (~38px) + topbar (28px) + breathing room (12px). */
-  top: 78px;
+  top: var(--panel-top);
   left: 24px;
   width: 280px;
   font-size: 11px;
@@ -369,7 +415,7 @@ canvas#hologram-canvas {
 .state-badge {
   position: fixed;
   left: 50%;
-  top: 82px;
+  top: calc(var(--panel-top) + 4px);
   transform: translateX(-50%);
   color: var(--c-glow);
   font-family: var(--display);
@@ -400,7 +446,7 @@ canvas#hologram-canvas {
 .trace {
   position: fixed;
   left: 50%;
-  top: 120px;
+  top: calc(var(--panel-top) + 42px);
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
