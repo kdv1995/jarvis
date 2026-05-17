@@ -2,18 +2,18 @@
 #
 # Build → sign → install Jarvis into /Applications.
 #
-# Run this after any code change. It will:
-#   1. Build the release binary (`cargo build --release`)
-#   2. Take a clean copy of the existing Tauri-bundled .app structure
-#      (which already has the icon, Info.plist, Resources/portrait.png, etc.)
-#   3. Swap in the freshly built binary
-#   4. Re-sign with the "Jarvis Code Signing" cert (stable across rebuilds!)
-#   5. Atomically replace /Applications/Jarvis.app
-#   6. Re-launch via `open -a Jarvis`
+# This is the single command a new user runs after `git clone`. It:
+#   1. Builds the FULL Tauri bundle (`tauri build --bundles app`) — runs
+#      `vite build` + Rust release build + bundle assembly in one shot,
+#      so frontend changes (HTML/CSS/TS) are always embedded fresh.
+#   2. Stops any running Jarvis (TCC dislikes hot-swaps).
+#   3. Installs the bundle to /Applications/Jarvis.app.
+#   4. Re-signs with the stable "Jarvis Code Signing" cert (if present) or
+#      ad-hoc with a fixed identifier (com.jarvis.hud).
+#   5. Launches via `open -a Jarvis`.
 #
-# Because we always sign with the same cert, macOS TCC keeps every permission
-# you've granted (Mic, Accessibility, Automation→Terminal, etc.) — you only
-# grant them ONCE, the first time you launch the freshly-signed app.
+# Because the bundle identifier is stable across rebuilds, macOS TCC keeps
+# every permission you've granted (Mic, Accessibility, Automation→Terminal).
 
 set -euo pipefail
 
@@ -23,17 +23,14 @@ CERT_NAME="Jarvis Code Signing"
 BUNDLE_ID="com.jarvis.hud"
 
 BUILT_BUNDLE="$REPO_ROOT/src-tauri/target/release/bundle/macos/Jarvis.app"
-BUILT_BINARY="$REPO_ROOT/src-tauri/target/release/jarvis"
 INSTALLED_APP="/Applications/Jarvis.app"
+TAURI_CLI="$REPO_ROOT/node_modules/.bin/tauri"
 
-cd "$REPO_ROOT/src-tauri"
+cd "$REPO_ROOT"
 
-# Pick a signing identity. If the self-signed cert is available, use it for
-# full TCC stability across rebuilds. Otherwise fall back to ad-hoc + an
-# explicit identifier — same `com.jarvis.hud` for every rebuild — which gives
-# partial stability (Accessibility/Automation usually persist; Microphone
-# sometimes re-prompts because TCC keys mic grants tighter to cdhash for
-# ad-hoc signatures).
+# Pick a signing identity. Prefer the self-signed cert for stable TCC; fall
+# back to ad-hoc + fixed identifier (partial stability — mic may re-prompt
+# because TCC keys mic grants to cdhash for ad-hoc signatures).
 USE_CERT=0
 if security find-identity -v -p codesigning "$KEYCHAIN_PATH" 2>/dev/null \
         | grep -q "$CERT_NAME"; then
@@ -44,63 +41,60 @@ else
     echo "  (Run scripts/create-codesign-cert.sh once for full TCC stability across rebuilds.)"
 fi
 
-# Sanity: a previously-built .app bundle structure exists?
-# (We need its Info.plist, Resources, icon — the Rust binary alone isn't an app.)
+# Make sure deps are present so a fresh clone works without a separate step.
+if [ ! -f "$TAURI_CLI" ]; then
+    echo "→ Installing npm deps (first-time setup)"
+    npm install
+fi
+
+echo "→ Building Tauri bundle (Vite + Rust + .app)"
+"$TAURI_CLI" build --bundles app
+
 if [ ! -d "$BUILT_BUNDLE" ]; then
-    echo "✗ No bundle skeleton at $BUILT_BUNDLE" >&2
-    echo "  Need to do a one-time 'cargo tauri build' to produce the .app shell." >&2
-    echo "  Install the CLI with: cargo install tauri-cli --version '^2.0'" >&2
+    echo "✗ Build did not produce $BUILT_BUNDLE" >&2
     exit 1
 fi
 
-echo "→ Building release binary"
-cargo build --release
-
-if [ ! -f "$BUILT_BINARY" ]; then
-    echo "✗ Build did not produce $BUILT_BINARY" >&2
-    exit 1
-fi
-
-# Stop running Jarvis so we can replace the bundle (TCC dislikes hot-swaps).
+# Stop running Jarvis so we can replace the bundle cleanly.
 echo "→ Stopping running Jarvis"
 pkill -f "/Applications/Jarvis.app/Contents/MacOS/jarvis" 2>/dev/null || true
 pkill -f "target/release/jarvis" 2>/dev/null || true
 osascript -e 'tell application "Jarvis" to quit' 2>/dev/null || true
 sleep 1
 
-echo "→ Swapping in freshly built binary"
-cp -f "$BUILT_BINARY" "$BUILT_BUNDLE/Contents/MacOS/jarvis"
-
-echo "→ Signing the bundle"
-# --force: replace any existing signature
-# --deep:  sign all nested code (frameworks, helpers)
-# --identifier: pin the signed identifier to com.jarvis.hud so TCC's match key
-#               is identity-based, not random-linker-ad-hoc-based.
-if [ "$USE_CERT" = "1" ]; then
-    codesign --force --deep \
-        --sign "$CERT_NAME" \
-        --keychain "$KEYCHAIN_PATH" \
-        --identifier "$BUNDLE_ID" \
-        "$BUILT_BUNDLE"
-else
-    codesign --force --deep \
-        --sign - \
-        --identifier "$BUNDLE_ID" \
-        "$BUILT_BUNDLE"
-fi
-
-# Verify the signature looks right
-echo "→ Verifying signature"
-codesign -dvv "$BUILT_BUNDLE" 2>&1 | grep -E "Identifier|Authority|TeamIdentifier|Signature"
+# Clear WebKit cache so the webview picks up the new frontend assets on
+# first launch (stale cache was the cause of multiple "I don't see the
+# button" bug reports during development).
+rm -rf ~/Library/Caches/com.jarvis.hud ~/Library/WebKit/com.jarvis.hud 2>/dev/null || true
 
 echo "→ Installing to $INSTALLED_APP"
 rm -rf "$INSTALLED_APP"
 cp -R "$BUILT_BUNDLE" "$INSTALLED_APP"
 
+echo "→ Signing the installed bundle"
+# --force: replace any existing signature
+# --deep:  sign all nested code (frameworks, helpers)
+# --identifier: pin to com.jarvis.hud so TCC keys by identity, not random cdhash.
+if [ "$USE_CERT" = "1" ]; then
+    codesign --force --deep \
+        --sign "$CERT_NAME" \
+        --keychain "$KEYCHAIN_PATH" \
+        --identifier "$BUNDLE_ID" \
+        "$INSTALLED_APP"
+else
+    codesign --force --deep \
+        --sign - \
+        --identifier "$BUNDLE_ID" \
+        "$INSTALLED_APP"
+fi
+
+echo "→ Verifying signature"
+codesign -dvv "$INSTALLED_APP" 2>&1 | grep -E "Identifier|Authority|TeamIdentifier|Signature"
+
 echo "→ Launching"
 open -a Jarvis
 
 echo ""
-echo "✓ Installed. Signature identifier=$BUNDLE_ID, anchored to $CERT_NAME."
+echo "✓ Installed. Signature identifier=$BUNDLE_ID."
 echo "  All TCC permissions granted to /Applications/Jarvis.app persist"
 echo "  across future runs of this script."

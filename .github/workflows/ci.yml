@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    # macOS-14 = Apple Silicon (M1). Required because tauri-nspanel + macOSPrivateApi
+    # don't cross-compile. ~$0.08/min, typical run ~6 min.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain (pinned in rust-toolchain.toml)
+        run: rustup show
+
+      - name: Setup Node (pinned in .nvmrc)
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Type-check (tsc)
+        run: npx tsc --noEmit
+
+      - name: Run Rust unit tests
+        working-directory: src-tauri
+        run: cargo test --release
+
+      - name: Clippy (deny warnings)
+        working-directory: src-tauri
+        run: cargo clippy --release --all-targets -- -D warnings
+        continue-on-error: true # initial pass — let users see warnings before enforcing
+
+      - name: Tauri build (no bundle — fastest pass; just verifies the binary links)
+        run: ./node_modules/.bin/tauri build --no-bundle
