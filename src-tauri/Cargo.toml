@@ -30,6 +30,12 @@ rubato = "0.16"
 # and `sysctl` shell-outs because sysinfo doesn't expose them on macOS.
 sysinfo = { version = "0.32", default-features = false, features = ["system", "disk", "network"] }
 
+# Skills system — YAML-defined workflows that compose fast-path commands.
+# serde_yaml is deprecated (April 2024) but still maintained for 0.9.x line;
+# we may migrate to yaml-rust2 if upstream archives the repo.
+serde_yaml = "0.9"
+notify = { version = "7", default-features = false, features = ["macos_fsevent"] }
+
 # ElevenLabs cloud STT + TTS (macOS `say` stays as the offline TTS fallback).
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "multipart", "rustls-tls"] }
 dotenvy = "0.15"

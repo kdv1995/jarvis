@@ -90,6 +90,10 @@ pub struct Engine {
     mode: Mutex<Mode>,
     /// When the current `AwaitingCommand` started (for the timeout).
     awaiting_since: Mutex<Option<Instant>>,
+    /// Skill registry — atomically swappable via `notify` file watcher.
+    /// Read-locked on every utterance to match triggers; write-locked once
+    /// per ~/.jarvis/skills/ change.
+    skill_registry: Arc<std::sync::RwLock<crate::skills::SkillRegistry>>,
     /// Live `afplay` (or `say`) child during TTS playback — `Some` while
     /// Jarvis is speaking. Used for barge-in: the listener loop takes the
     /// child out and `.kill()`s it when it detects the user speaking over
@@ -313,6 +317,80 @@ impl Engine {
                 Ok(_) => return self.fail("Empty briefing — try again."),
                 Err(e) => return self.fail(&e),
             }
+        }
+
+        // --- Skill registry queries -----------------------------------------
+        // "list skills" / "what skills do I have" / "reload skills" — meta
+        // commands that act on the skill registry itself.
+        {
+            let lc = command.to_lowercase();
+            let cleaned = lc.trim_end_matches(['.', '?', '!']).trim();
+            if matches!(
+                cleaned,
+                "list skills"
+                    | "what skills do i have"
+                    | "what skills are available"
+                    | "show skills"
+                    | "show me my skills"
+            ) {
+                let reg = self.skill_registry.read().ok();
+                let answer = match reg {
+                    Some(r) if r.is_empty() => "No skills loaded.".to_string(),
+                    Some(r) => {
+                        let names: Vec<&str> =
+                            r.list().iter().map(|s| s.name.as_str()).collect();
+                        format!("{} skills: {}.", names.len(), names.join(", "))
+                    }
+                    None => "Skill registry not available.".into(),
+                };
+                println!("[pipeline] SKILLS LIST — {answer}");
+                self.emit_state("speaking");
+                let _ = self
+                    .app
+                    .emit("hud://caption", json!({ "text": &answer, "final": false }));
+                let _ = tts::speak_sentence(&answer, &self.app, &self.tts_child);
+                let _ = self
+                    .app
+                    .emit("hud://caption", json!({ "text": &answer, "final": true }));
+                self.remember_turn(&command, &answer);
+                self.set_mode(Mode::AwaitingCommand);
+                return;
+            }
+            if matches!(
+                cleaned,
+                "reload skills" | "refresh skills" | "rescan skills"
+            ) {
+                let fresh = crate::skills::build_registry();
+                let n = fresh.len();
+                if let Ok(mut w) = self.skill_registry.write() {
+                    *w = fresh;
+                }
+                let answer = format!("Reloaded. {n} skills.");
+                println!("[pipeline] SKILLS RELOAD — {answer}");
+                self.emit_state("speaking");
+                let _ = tts::speak_sentence(&answer, &self.app, &self.tts_child);
+                self.remember_turn(&command, &answer);
+                self.set_mode(Mode::AwaitingCommand);
+                return;
+            }
+        }
+
+        // --- Skill execution -----------------------------------------------
+        // Match the utterance against loaded skills BEFORE the generic
+        // fast-path table so user-defined workflows take priority.
+        let matched_skill: Option<crate::skills::Skill> = self
+            .skill_registry
+            .read()
+            .ok()
+            .and_then(|reg| reg.find_match(&command).cloned());
+        if let Some(skill) = matched_skill {
+            println!("[pipeline] SKILL → {}", skill.name);
+            self.emit_state("speaking");
+            let ctx = EngineSkillCtx { engine: self.clone() };
+            let last_say = crate::skills::run_skill(&skill, &ctx);
+            self.remember_turn(&command, &last_say);
+            self.set_mode(Mode::AwaitingCommand);
+            return;
         }
 
         // --- System telemetry fast-path -------------------------------------
@@ -673,11 +751,17 @@ pub fn start(app: AppHandle, state: Arc<AppState>) -> Arc<Engine> {
         Err(e) => eprintln!("[pipeline] journal hydrate failed: {e}"),
     }
 
+    // Skills: load from bundled + user dirs, install a file-watcher for
+    // hot-reload of ~/.jarvis/skills/.
+    let skill_registry = Arc::new(std::sync::RwLock::new(crate::skills::build_registry()));
+    crate::skills::spawn_watcher(Arc::clone(&skill_registry));
+
     let engine = Arc::new(Engine {
         app,
         state,
         mode: Mutex::new(Mode::Idle),
         awaiting_since: Mutex::new(None),
+        skill_registry,
         tts_child: Arc::new(Mutex::new(None)),
         conversation_history: Mutex::new(hydrated),
         last_was_interrupted: std::sync::atomic::AtomicBool::new(false),
@@ -976,6 +1060,49 @@ fn needs_cli(command: &str) -> bool {
 
 /// Try to handle `command` with a fast Rust+AppleScript path. Returns
 /// `Some(spoken_response)` on a hit, `None` to fall through to the brain.
+// ── Skill execution glue ────────────────────────────────────────────────────
+
+/// Wires the `Engine` to the `SkillContext` trait so `run_skill()` can speak,
+/// run fast-path commands, and execute shell / AppleScript without coupling
+/// `skills.rs` to `pipeline.rs`. Holds a clone of the engine handle so each
+/// step has access to the live TTS slot, app, and config.
+struct EngineSkillCtx {
+    engine: Arc<Engine>,
+}
+
+impl crate::skills::SkillContext for EngineSkillCtx {
+    fn speak(&self, sentence: &str) {
+        let _ = self.engine.app.emit(
+            "hud://caption",
+            json!({ "text": sentence, "final": false }),
+        );
+        let _ =
+            tts::speak_sentence(sentence, &self.engine.app, &self.engine.tts_child);
+        let _ = self
+            .engine
+            .app
+            .emit("hud://caption", json!({ "text": sentence, "final": true }));
+    }
+    fn run_fast_action(&self, command: &str) -> Option<String> {
+        try_fast_action(command)
+    }
+    fn run_shell(&self, cmd: &str) -> Result<(), String> {
+        let status = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(cmd)
+            .status()
+            .map_err(|e| format!("shell launch: {e}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("shell exit {status}"))
+        }
+    }
+    fn run_applescript(&self, src: &str) -> Result<(), String> {
+        run_osascript(src)
+    }
+}
+
 fn try_fast_action(command: &str) -> Option<String> {
     let cleaned = command
         .to_lowercase()

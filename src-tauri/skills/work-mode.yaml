@@ -1,0 +1,20 @@
+# Work mode — quiet the OS, surface dev tools.
+name: work-mode
+triggers:
+  - start work mode
+  - work mode
+  - work mode on
+  - begin work
+  - start working
+description: Enables DND, opens Cursor + Terminal + Notion, closes noise.
+on_error: continue
+steps:
+  - say: "Starting work mode."
+  - command: "do not disturb on"
+  - command: "open Cursor"
+  - command: "open Terminal"
+  - wait: 800
+  - command: "close Slack"
+  - command: "close Discord"
+  - command: "close Spotify"
+  - say: "Work mode ready."

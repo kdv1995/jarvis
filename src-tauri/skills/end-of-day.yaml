@@ -1,0 +1,20 @@
+# End of day — close noisy apps, lock the screen.
+name: end-of-day
+triggers:
+  - end of day
+  - shut down for the day
+  - i'm done for today
+  - wind down
+  - wrap up
+description: Closes communication apps, turns off DND, locks the screen.
+on_error: continue
+steps:
+  - say: "Wrapping up for today."
+  - command: "close Slack"
+  - command: "close Discord"
+  - command: "close Telegram"
+  - command: "close WhatsApp"
+  - command: "do not disturb off"
+  - wait: 500
+  - say: "Good night."
+  - command: "lock the screen"

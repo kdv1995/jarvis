@@ -1,0 +1,18 @@
+# Meeting prep — silence the room, surface video conferencing.
+name: meeting-prep
+triggers:
+  - meeting prep
+  - meeting time
+  - i have a meeting
+  - get ready for a meeting
+  - prepare for a meeting
+description: DND on, mute system volume, close noise, open Zoom.
+on_error: continue
+steps:
+  - say: "Getting ready for your meeting."
+  - command: "do not disturb on"
+  - command: "mute"
+  - command: "close Spotify"
+  - command: "close YouTube"
+  - command: "open Zoom"
+  - say: "You're ready."

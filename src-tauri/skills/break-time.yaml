@@ -1,0 +1,19 @@
+# Break time — pause work, hide code, play music.
+name: break-time
+triggers:
+  - break time
+  - take a break
+  - i need a break
+  - coffee break
+  - lunch break
+description: Hides work apps, dims screen, starts music.
+on_error: continue
+steps:
+  - say: "Taking a break."
+  - command: "do not disturb on"
+  - command: "show desktop"
+  - command: "brightness down"
+  - command: "open Spotify"
+  - wait: 500
+  - command: "play"
+  - say: "Enjoy your break."

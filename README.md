@@ -244,6 +244,57 @@ All commands fire after the wake chime. Most run in ~20 ms (no LLM), the rest go
 
 Anything not matched above falls through to the LLM brain (Ollama for knowledge, claude CLI for complex tasks).
 
+## Skills (YAML workflows)
+
+A *skill* is a named recipe with trigger phrases and an ordered list of steps. When you speak a trigger phrase, Jarvis runs the whole workflow.
+
+### Shipped skills
+
+These come pre-loaded with the app:
+
+| Trigger phrases | What it does |
+|---|---|
+| "start work mode" / "work mode on" | DND on, open Cursor + Terminal, close Slack/Discord/Spotify |
+| "end of day" / "wind down" / "wrap up" | Close all communication apps, DND off, lock screen |
+| "meeting prep" / "i have a meeting" | DND on, mute, close noise, open Zoom |
+| "deep focus" / "focus mode" | DND, hide everything but Cursor, brightness up |
+| "break time" / "take a break" | Show desktop, dim screen, open Spotify, play |
+
+### Meta commands
+
+- "list skills" — speak the names of all loaded skills
+- "reload skills" — re-scan `~/.jarvis/skills/` after editing
+
+### Writing your own
+
+Drop a `.yaml` file in `~/.jarvis/skills/`. Live-reload picks it up within a second.
+
+```yaml
+name: my-skill            # required, unique
+triggers:                  # required, at least one
+  - phrase one
+  - phrase two
+description: optional      # shown by "list skills"
+on_error: continue         # or "stop" — default: continue
+steps:
+  - say: "Starting"        # speak via TTS
+  - command: "open Cursor" # run any voice command from this README
+  - wait: 500              # milliseconds
+  - shell: "echo hi >> /tmp/jarvis.log"
+  - applescript: |
+      tell application "Finder" to activate
+  - say: "Done"
+```
+
+Step types:
+- `say:` — TTS announcement
+- `command:` — re-route through Jarvis's fast-path table (any voice verb from the tables above)
+- `wait:` — sleep N milliseconds (useful between launches)
+- `shell:` — `/bin/sh -c <cmd>`, output not spoken
+- `applescript:` — raw AppleScript snippet
+
+User skills with the same `name:` as a bundled skill **override** the bundled version — copy a YAML out of `/Applications/Jarvis.app/Contents/Resources/skills/` and tweak it.
+
 ## Architecture
 
 ```

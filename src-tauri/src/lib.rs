@@ -10,6 +10,7 @@ mod commands;
 mod config;
 mod pipeline;
 mod state;
+mod skills;
 mod stt;
 mod sysinfo;
 mod tts;

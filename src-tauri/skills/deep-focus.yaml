@@ -1,0 +1,18 @@
+# Deep focus — minimal distractions, code surface only.
+name: deep-focus
+triggers:
+  - deep focus
+  - focus mode
+  - focus time
+  - start deep work
+  - deep work mode
+description: DND on, hide everything except Cursor, brightness up.
+on_error: continue
+steps:
+  - say: "Entering deep focus."
+  - command: "do not disturb on"
+  - command: "open Cursor"
+  - wait: 600
+  - command: "minimize all but this"
+  - command: "brightness up"
+  - say: "Focus locked in."
