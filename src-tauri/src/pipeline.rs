@@ -37,6 +37,11 @@ use crate::{agent, tts};
 ///      keep accidentally triggering Jarvis.
 const AWAIT_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How long Jarvis will wait for a "yes" / "do it" reply after prompting
+/// to confirm a destructive command. Longer than AWAIT_TIMEOUT so the user
+/// has time to actually think before answering.
+const CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(8);
+
 /// Maximum number of recent turns to remember for context injection.
 /// 8 covers a typical mid-length conversation (~16 utterances of back-and-
 /// forth) without bloating brain prompts. Excess entries are evicted FIFO.
@@ -94,6 +99,12 @@ pub struct Engine {
     /// Read-locked on every utterance to match triggers; write-locked once
     /// per ~/.jarvis/skills/ change.
     skill_registry: Arc<std::sync::RwLock<crate::skills::SkillRegistry>>,
+    /// Pending verbal confirmation — when the user has just spoken a
+    /// destructive verb ("empty the trash", "lock the screen", etc.), we
+    /// stash the original command + timestamp here and prompt for "yes".
+    /// On the next utterance within `CONFIRMATION_TIMEOUT`, an affirmative
+    /// reply executes the stashed command; anything else cancels it.
+    pending_confirmation: Mutex<Option<(String, Instant)>>,
     /// Live `afplay` (or `say`) child during TTS playback — `Some` while
     /// Jarvis is speaking. Used for barge-in: the listener loop takes the
     /// child out and `.kill()`s it when it detects the user speaking over
@@ -317,6 +328,71 @@ impl Engine {
                 Ok(_) => return self.fail("Empty briefing — try again."),
                 Err(e) => return self.fail(&e),
             }
+        }
+
+        // --- Pending-confirmation gate --------------------------------------
+        // If we just prompted "Empty trash — say yes", treat THIS utterance
+        // as the answer. Affirmative → execute the stashed verb. Negative
+        // (or expired or unrelated) → cancel.
+        let pending = {
+            let mut slot = self.pending_confirmation.lock_recover();
+            if let Some((cmd, when)) = slot.as_ref() {
+                if when.elapsed() < CONFIRMATION_TIMEOUT {
+                    Some(cmd.clone())
+                } else {
+                    *slot = None;
+                    None
+                }
+            } else {
+                None
+            }
+        };
+        if let Some(pending_cmd) = pending {
+            if is_affirmative(&command) {
+                // Clear the slot BEFORE executing so a panic mid-execute can't
+                // leave a stale confirmation.
+                *self.pending_confirmation.lock_recover() = None;
+                if let Some(answer) = try_fast_action(&pending_cmd) {
+                    println!("[pipeline] CONFIRMED → {pending_cmd} → {answer}");
+                    self.emit_state("speaking");
+                    let _ = tts::speak_sentence(&answer, &self.app, &self.tts_child);
+                    self.remember_turn(&command, &answer);
+                    self.set_mode(Mode::AwaitingCommand);
+                    return;
+                }
+            } else if is_negative(&command) {
+                *self.pending_confirmation.lock_recover() = None;
+                let answer = "Cancelled.";
+                println!("[pipeline] CONFIRMATION CANCELLED — {pending_cmd}");
+                self.emit_state("speaking");
+                let _ = tts::speak_sentence(answer, &self.app, &self.tts_child);
+                self.remember_turn(&command, answer);
+                self.set_mode(Mode::AwaitingCommand);
+                return;
+            } else {
+                // Treat unrelated speech as "user moved on" — silently drop
+                // the pending confirmation and process the new utterance
+                // normally (don't return — fall through to the rest of the
+                // pipeline).
+                *self.pending_confirmation.lock_recover() = None;
+                println!("[pipeline] CONFIRMATION ABANDONED — {pending_cmd}");
+            }
+        }
+
+        // --- Destructive-command gate ---------------------------------------
+        // If the utterance is a destructive verb, DON'T execute it — prompt
+        // for verbal confirmation and stash for the next turn.
+        if let Some(label) = classify_destructive(&command) {
+            *self.pending_confirmation.lock_recover() =
+                Some((command.clone(), Instant::now()));
+            let prompt = format!("Are you sure you want to {label}? Say yes to confirm.");
+            println!("[pipeline] CONFIRMATION REQUESTED — {command}");
+            self.emit_state("speaking");
+            let _ = tts::speak_sentence(&prompt, &self.app, &self.tts_child);
+            self.remember_turn(&command, &prompt);
+            // Stay in AwaitingCommand so the reply doesn't need a re-wake.
+            self.set_mode(Mode::AwaitingCommand);
+            return;
         }
 
         // --- Skill registry queries -----------------------------------------
@@ -762,6 +838,7 @@ pub fn start(app: AppHandle, state: Arc<AppState>) -> Arc<Engine> {
         mode: Mutex::new(Mode::Idle),
         awaiting_since: Mutex::new(None),
         skill_registry,
+        pending_confirmation: Mutex::new(None),
         tts_child: Arc::new(Mutex::new(None)),
         conversation_history: Mutex::new(hydrated),
         last_was_interrupted: std::sync::atomic::AtomicBool::new(false),
@@ -1060,6 +1137,101 @@ fn needs_cli(command: &str) -> bool {
 
 /// Try to handle `command` with a fast Rust+AppleScript path. Returns
 /// `Some(spoken_response)` on a hit, `None` to fall through to the brain.
+// ── Destructive-verb confirmation gate ─────────────────────────────────────
+
+/// Classify a voice command as needing a "say yes to confirm" prompt before
+/// execution. Conservative list — only operations that LOSE STATE (trash,
+/// lock requires re-login, network off cuts connectivity, sleep loses focus).
+/// Returns a human-readable description for the TTS prompt.
+fn classify_destructive(command: &str) -> Option<&'static str> {
+    let c = command.to_lowercase();
+    let c = c.trim_end_matches(['.', '?', '!']).trim();
+    // Order matters only for readability — patterns are disjoint.
+    if matches!(c, "empty the trash" | "empty trash") {
+        return Some("empty the trash");
+    }
+    if c.starts_with("move ") && c.contains(" to trash") {
+        return Some("move to trash");
+    }
+    if matches!(
+        c,
+        "lock the screen" | "lock screen" | "lock my mac" | "lock the mac" | "lock"
+    ) {
+        return Some("lock the screen");
+    }
+    if matches!(
+        c,
+        "go to sleep" | "sleep" | "sleep my mac" | "sleep the mac" | "good night"
+    ) {
+        return Some("put your Mac to sleep");
+    }
+    if matches!(
+        c,
+        "wifi off" | "turn off wifi" | "disable wifi" | "wi-fi off" | "turn off wi-fi"
+    ) {
+        return Some("turn off Wi-Fi");
+    }
+    if matches!(
+        c,
+        "bluetooth off" | "turn off bluetooth" | "disable bluetooth"
+    ) {
+        return Some("turn off Bluetooth");
+    }
+    None
+}
+
+/// True if the spoken text is an affirmative reply to a confirmation prompt.
+/// Multi-language (EN + UK + RU) since the user mixes them.
+fn is_affirmative(command: &str) -> bool {
+    let c = command.to_lowercase();
+    let c = c.trim_end_matches(['.', '?', '!']).trim();
+    matches!(
+        c,
+        "yes"
+            | "yeah"
+            | "yep"
+            | "yup"
+            | "confirm"
+            | "confirmed"
+            | "do it"
+            | "go ahead"
+            | "proceed"
+            | "ok do it"
+            | "okay do it"
+            | "sure"
+            | "так"
+            | "так підтверджую"
+            | "підтверджую"
+            | "виконуй"
+            | "да"
+            | "давай"
+    )
+}
+
+/// Mirror of `is_affirmative` — explicit negation. Anything else just expires
+/// the pending confirmation silently (treat as "user changed topic").
+fn is_negative(command: &str) -> bool {
+    let c = command.to_lowercase();
+    let c = c.trim_end_matches(['.', '?', '!']).trim();
+    matches!(
+        c,
+        "no"
+            | "nope"
+            | "cancel"
+            | "cancel it"
+            | "abort"
+            | "stop"
+            | "never mind"
+            | "nevermind"
+            | "scratch that"
+            | "ні"
+            | "відміни"
+            | "скасуй"
+            | "нет"
+            | "отмена"
+    )
+}
+
 // ── Skill execution glue ────────────────────────────────────────────────────
 
 /// Wires the `Engine` to the `SkillContext` trait so `run_skill()` can speak,
@@ -3370,5 +3542,64 @@ mod tests {
         let (task, when) = super::parse_reminder_time("call mom at 3 pm tomorrow");
         assert_eq!(task, "call mom");
         assert_eq!(when.unwrap(), "at 3 pm tomorrow");
+    }
+
+    // ----- Destructive-verb confirmation gate -----
+
+    #[test]
+    fn classify_destructive_trash_variants() {
+        assert_eq!(super::classify_destructive("empty the trash"), Some("empty the trash"));
+        assert_eq!(super::classify_destructive("Empty Trash"), Some("empty the trash"));
+        assert_eq!(super::classify_destructive("empty trash."), Some("empty the trash"));
+    }
+
+    #[test]
+    fn classify_destructive_move_to_trash() {
+        assert_eq!(
+            super::classify_destructive("move resume.pdf to trash"),
+            Some("move to trash")
+        );
+    }
+
+    #[test]
+    fn classify_destructive_lock_and_sleep() {
+        assert_eq!(super::classify_destructive("lock the screen"), Some("lock the screen"));
+        assert_eq!(super::classify_destructive("sleep"), Some("put your Mac to sleep"));
+    }
+
+    #[test]
+    fn classify_destructive_network_toggles() {
+        assert_eq!(super::classify_destructive("wifi off"), Some("turn off Wi-Fi"));
+        assert_eq!(super::classify_destructive("bluetooth off"), Some("turn off Bluetooth"));
+    }
+
+    #[test]
+    fn classify_destructive_safe_returns_none() {
+        assert!(super::classify_destructive("open Safari").is_none());
+        assert!(super::classify_destructive("what time is it").is_none());
+        assert!(super::classify_destructive("move file to Downloads").is_none());
+        assert!(super::classify_destructive("wifi on").is_none()); // turning ON is safe
+    }
+
+    #[test]
+    fn is_affirmative_english_and_ukrainian() {
+        assert!(super::is_affirmative("yes"));
+        assert!(super::is_affirmative("Yes."));
+        assert!(super::is_affirmative("do it"));
+        assert!(super::is_affirmative("confirm"));
+        assert!(super::is_affirmative("так"));
+        assert!(super::is_affirmative("підтверджую"));
+        assert!(!super::is_affirmative("maybe"));
+        assert!(!super::is_affirmative("open safari"));
+    }
+
+    #[test]
+    fn is_negative_english_and_ukrainian() {
+        assert!(super::is_negative("no"));
+        assert!(super::is_negative("cancel"));
+        assert!(super::is_negative("never mind"));
+        assert!(super::is_negative("ні"));
+        assert!(super::is_negative("скасуй"));
+        assert!(!super::is_negative("yes"));
     }
 }
