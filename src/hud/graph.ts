@@ -46,6 +46,10 @@ const VERT = /* glsl */ `
   uniform float uMouthWide;
   uniform float uJaw;
   uniform float uBreath;
+  /* TTS audio amplitude (0..1) — drives whole-surface resonance during
+     speaking. Frontend Developer agent: "highest WOW/LOC ratio". When
+     Jarvis speaks, the hologram visibly throbs with the voice envelope. */
+  uniform float uAudio;
   varying vec2 vUv;
   varying vec3 vNormal;
   varying float vEdge;
@@ -103,6 +107,12 @@ const VERT = /* glsl */ `
     // Compose deformation
     float wipe = smoothstep(1.0 - uMaterialize - 0.05, 1.0 - uMaterialize + 0.05, uv.y);
     float dz = depthBias * uDisplace * (uHasDepth > 0.5 ? 0.9 : (0.4 + radial * 1.4)) * (1.0 + uBreath * 0.15);
+    // Audio resonance — additive depth pulse driven by TTS amplitude.
+    // Concentrated on the face center (radial falloff) so cheekbones puff
+    // outward with the voice envelope while edges stay still.
+    // 0.06 is the max additional depth in scene units — visible but not
+    // distorting at the typical 0..0.6 audio range.
+    dz += uAudio * 0.06 * radial * radial * wipe;
     dz *= wipe;
     vEdge = wipe * (1.0 - wipe) * 4.0;
     vec3 deformed = vec3(
@@ -334,6 +344,10 @@ function updateStateMotion(t: number): void {
   uniforms.uJaw.value = jaw;
   uniforms.uBreath.value = breath;
   uniforms.uGlow.value = glow;
+  // Audio-driven displacement uniform: zero outside speaking state so the
+  // hologram only "throbs" when Jarvis is actually talking. Smoothed value
+  // (audioLevel) already lerps at 0.4 per frame — no extra easing here.
+  uniforms.uAudio.value = state === "speaking" ? audioLevel : 0;
 }
 
 function resize(): void {
@@ -430,6 +444,7 @@ export function init(container: HTMLElement): void {
     uJaw: { value: 0.0 },
     uBreath: { value: 0.0 },
     uGlow: { value: 1.0 },
+    uAudio: { value: 0.0 },
   };
 
   portraitGeo = new THREE.PlaneGeometry(2.6, 2.6, 280, 280);
