@@ -330,6 +330,32 @@ impl Engine {
             }
         }
 
+        // --- Easter eggs (WOW moments) --------------------------------------
+        // Hidden verbs that fire dramatic replies + special HUD effects.
+        // Checked FIRST so they always win — never let a fast-path verb
+        // accidentally swallow "are you alive?".
+        if let Some((reply, effect)) = try_easter_egg(&command) {
+            println!("[pipeline] EASTER EGG → {effect:?} → {reply}");
+            self.emit_state("speaking");
+            // Emit a dedicated effect event the HUD can hook visuals to
+            // (red dot pulse, orbital triple, reactor glow, brighten).
+            if let Some(name) = effect {
+                let _ = self.app.emit("hud://egg", json!({ "effect": name }));
+            }
+            let _ = self
+                .app
+                .emit("hud://caption", json!({ "text": &reply, "final": false }));
+            if let Err(e) = tts::speak_sentence(&reply, &self.app, &self.tts_child) {
+                eprintln!("[jarvis] easter egg tts error: {e}");
+            }
+            let _ = self
+                .app
+                .emit("hud://caption", json!({ "text": &reply, "final": true }));
+            self.remember_turn(&command, &reply);
+            self.set_mode(Mode::AwaitingCommand);
+            return;
+        }
+
         // --- Pending-confirmation gate --------------------------------------
         // If we just prompted "Empty trash — say yes", treat THIS utterance
         // as the answer. Affirmative → execute the stashed verb. Negative
@@ -1137,6 +1163,129 @@ fn needs_cli(command: &str) -> bool {
 
 /// Try to handle `command` with a fast Rust+AppleScript path. Returns
 /// `Some(spoken_response)` on a hit, `None` to fall through to the brain.
+// ── Easter eggs (WOW moments from the 10-agent research) ──────────────────
+//
+// Hidden voice commands that exist purely for delight. They never reach the
+// brain; they fire a hand-crafted reply + emit `hud://egg` so the frontend
+// can run a dedicated visual effect.
+//
+// Output: Some((spoken_reply, optional_effect_name)). The pipeline speaks the
+// reply, emits the effect, and stays in AwaitingCommand.
+
+fn try_easter_egg(command: &str) -> Option<(String, Option<&'static str>)> {
+    let c = command.to_lowercase();
+    let c = c.trim_end_matches(['.', '?', '!']).trim();
+
+    // "Are you alive?" — defining moment for any J.A.R.V.I.S. clone.
+    if matches!(
+        c,
+        "are you alive"
+            | "are you alive jarvis"
+            | "jarvis are you alive"
+            | "ти живий"
+            | "ти живий джарвіс"
+    ) {
+        return Some(("Define alive, sir.".into(), Some("alive")));
+    }
+
+    // "Give me a hologram" — pure showmanship; HUD spawns triple orbit.
+    if matches!(
+        c,
+        "give me a hologram"
+            | "show me a hologram"
+            | "hologram mode"
+            | "show me your hologram"
+            | "покажи голограму"
+            | "покажи голограмму"
+    ) {
+        return Some(("As you wish.".into(), Some("hologram")));
+    }
+
+    // "Reactor at 99 percent" — direct MCU quote.
+    if matches!(
+        c,
+        "reactor at 99 percent"
+            | "reactor status"
+            | "check the reactor"
+            | "how's the reactor"
+    ) {
+        return Some(("Reactor stable. Don't tell Pepper.".into(), Some("reactor")));
+    }
+
+    // Compliments / thanks — brief brighten + warm reply (rotation).
+    if matches!(
+        c,
+        "thank you"
+            | "thanks"
+            | "thanks jarvis"
+            | "thank you jarvis"
+            | "good job"
+            | "good job jarvis"
+            | "you're amazing"
+            | "you're the best"
+            | "you are amazing"
+            | "well done"
+            | "molodets"
+            | "молодець"
+            | "дякую"
+            | "красава"
+    ) {
+        // Rotate replies based on a cheap deterministic clock-tick — no RNG dep.
+        const REPLIES: &[&str] = &[
+            "Always, sir.",
+            "I do try.",
+            "Flattery accepted.",
+            "Noted for the record.",
+            "You're welcome.",
+        ];
+        let idx = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0) as usize)
+            % REPLIES.len();
+        return Some((REPLIES[idx].into(), Some("compliment")));
+    }
+
+    // Self-introspection.
+    if matches!(
+        c,
+        "who are you" | "what are you" | "introduce yourself" | "what is your name"
+    ) {
+        return Some((
+            "I am Jarvis. Local-first voice assistant. Currently online.".into(),
+            Some("compliment"),
+        ));
+    }
+
+    // Tony Stark references.
+    if matches!(c, "good morning jarvis" | "morning jarvis") {
+        let hour = local_hour();
+        let greeting = if hour < 6 {
+            "It's the middle of the night, sir. But good morning."
+        } else if hour < 12 {
+            "Good morning. Coffee is recommended."
+        } else if hour < 18 {
+            "It's afternoon, but I'll allow it."
+        } else {
+            "Good evening. Or morning, in your timezone of choice."
+        };
+        return Some((greeting.into(), None));
+    }
+
+    None
+}
+
+/// Local-time hour (0-23). Used by easter eggs for time-aware replies.
+fn local_hour() -> u32 {
+    std::process::Command::new("/bin/date")
+        .arg("+%-H")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(12)
+}
+
 // ── Destructive-verb confirmation gate ─────────────────────────────────────
 
 /// Classify a voice command as needing a "say yes to confirm" prompt before
@@ -3612,5 +3761,56 @@ mod tests {
         assert!(super::is_negative("ні"));
         assert!(super::is_negative("скасуй"));
         assert!(!super::is_negative("yes"));
+    }
+
+    // ----- Easter eggs (WOW moments) -----
+
+    #[test]
+    fn egg_are_you_alive_triggers_alive_effect() {
+        let hit = super::try_easter_egg("are you alive").unwrap();
+        assert!(hit.0.to_lowercase().contains("alive"));
+        assert_eq!(hit.1, Some("alive"));
+    }
+
+    #[test]
+    fn egg_hologram_triggers_hologram_effect() {
+        let hit = super::try_easter_egg("give me a hologram").unwrap();
+        assert_eq!(hit.1, Some("hologram"));
+    }
+
+    #[test]
+    fn egg_reactor_quote() {
+        let hit = super::try_easter_egg("reactor at 99 percent").unwrap();
+        assert!(hit.0.contains("Pepper"));
+        assert_eq!(hit.1, Some("reactor"));
+    }
+
+    #[test]
+    fn egg_compliment_rotates_replies() {
+        // We can't easily assert which reply was picked (time-based), but we
+        // CAN assert the effect tag is right and the reply is non-empty.
+        let hit = super::try_easter_egg("thanks jarvis").unwrap();
+        assert!(!hit.0.is_empty());
+        assert_eq!(hit.1, Some("compliment"));
+    }
+
+    #[test]
+    fn egg_introspection() {
+        assert!(super::try_easter_egg("who are you").is_some());
+        assert!(super::try_easter_egg("what are you").is_some());
+    }
+
+    #[test]
+    fn egg_returns_none_for_regular_commands() {
+        assert!(super::try_easter_egg("open safari").is_none());
+        assert!(super::try_easter_egg("what time is it").is_none());
+        assert!(super::try_easter_egg("").is_none());
+    }
+
+    #[test]
+    fn egg_ukrainian_variants_work() {
+        assert!(super::try_easter_egg("ти живий").is_some());
+        assert!(super::try_easter_egg("покажи голограму").is_some());
+        assert!(super::try_easter_egg("дякую").is_some());
     }
 }

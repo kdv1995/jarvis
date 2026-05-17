@@ -18,6 +18,7 @@ import {
   appendTraceLine,
 } from "./hud/panels";
 import { initSysinfo, stopSysinfo } from "./hud/sysinfo";
+import { initEggs } from "./hud/eggs";
 import type { HudState, StatePayload, AmplitudePayload } from "./types";
 
 type WidgetMode = "fullscreen" | "widget";
@@ -35,6 +36,11 @@ initPanels(setAssistantState);
 // renders host / model / OS / battery / WiFi / CPU / RAM / disk / net into
 // the four corner panels. Replaces the demo's mock values.
 initSysinfo();
+
+// Easter-egg visual effects — listens to `hud://egg` and runs CSS-driven
+// signature animations (alive pulse, hologram orbit, reactor glow,
+// compliment brighten). Triggered by hidden voice verbs in pipeline.rs.
+initEggs();
 
 // One entry point that drives both the 3D avatar and the HUD chrome.
 function setAssistantState(state: HudState): void {
