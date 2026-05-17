@@ -1,6 +1,12 @@
 # Pins the Rust toolchain so contributors and CI build with the same compiler.
 # Update by hand when bumping; rustup will auto-install on first cargo invocation.
+#
+# `stable` instead of a fixed version because some transitive deps now require
+# Edition 2024 (needs Rust >= 1.85). Switch back to a pinned version once the
+# ecosystem settles around an LTS-like channel; "stable" is the pragmatic
+# choice for a hobby project where contributor friction matters more than
+# reproducibility-to-the-patch.
 [toolchain]
-channel = "1.83.0"
+channel = "stable"
 components = ["rustfmt", "clippy"]
 profile = "minimal"

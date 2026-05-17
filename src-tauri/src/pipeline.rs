@@ -1732,21 +1732,18 @@ fn try_fast_action(command: &str) -> Option<String> {
         }
     }
 
-    // "add <item> to <list>" — appends to a Reminders list.
-    if let Some(rest) = cleaned.strip_prefix("add ") {
-        if let Some((item, list)) = rest.rsplit_once(" to ") {
-            let orig = command.trim();
-            let orig_lower = orig.to_lowercase();
-            if orig_lower.starts_with("add ") {
-                // Slice the original-case version to preserve item case.
-                if let Some(stripped) = orig[4..].rsplit_once(" to ") {
-                    let item = stripped.0.trim();
-                    let list = stripped.1.trim_end_matches(['.', '?', '!']).trim();
-                    if !item.is_empty() && !list.is_empty() {
-                        return fast_add_to_list(item, list);
-                    }
+    // "add <item> to <list>" — appends to a Reminders list. Case-preserve by
+    // slicing the ORIGINAL command (not the lowercased one) — so proper nouns
+    // ("John", "NYC") aren't downcased before reaching Reminders.
+    if cleaned.starts_with("add ") && cleaned.contains(" to ") {
+        let orig = command.trim();
+        if orig.len() > 4 {
+            if let Some((item, list)) = orig[4..].rsplit_once(" to ") {
+                let item = item.trim();
+                let list = list.trim_end_matches(['.', '?', '!']).trim();
+                if !item.is_empty() && !list.is_empty() {
+                    return fast_add_to_list(item, list);
                 }
-                let _ = (item, list); // suppress unused if early-return missed
             }
         }
     }
@@ -2589,7 +2586,21 @@ fn fast_empty_trash() -> Option<String> {
 
 // ── Notes & Reminders (Pack 5) ──────────────────────────────────────────
 
-/// Escape a string for safe inclusion in an AppleScript double-quoted literal.
+/// Escape a string for inclusion in an AppleScript double-quoted literal.
+///
+/// **DO NOT USE for user-controlled text.** This escapes only `\` and `"`,
+/// but newlines, `}`, and other characters can break out of `{name:"..."}`
+/// records into the surrounding `tell` block — see the AppleScript injection
+/// fix in commit 'security: AppleScript injection fix'.
+///
+/// For user content, use `run_osascript_with_args` / `read_osascript_with_args`
+/// which pass values through argv (the AS interpreter reads them at runtime;
+/// they never become AppleScript source code).
+///
+/// Kept around for static / trusted-string interpolation (e.g. building a
+/// destination clause from a closed set of folder names). Marked `dead_code`
+/// because no current call sites exist after the security migration.
+#[allow(dead_code)]
 fn escape_applescript(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
