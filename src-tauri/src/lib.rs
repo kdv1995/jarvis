@@ -21,7 +21,6 @@ mod overlay;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use serde_json::json;
 use tauri::menu::{Menu, MenuItem};
@@ -29,9 +28,6 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager};
 
 use state::AppState;
-
-#[cfg(target_os = "macos")]
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 /// Load environment variables from a `.env` file.
 ///
@@ -54,21 +50,10 @@ fn load_env() {
     }
 }
 
-fn wake_launch_marker_path() -> PathBuf {
-    std::env::temp_dir().join("jarvis-wake-launch")
-}
-
-fn consume_wake_launch_marker() -> bool {
-    let path = wake_launch_marker_path();
-    let fresh = std::fs::metadata(&path)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|modified| modified.elapsed().ok())
-        .map(|age| age < Duration::from_secs(30))
-        .unwrap_or(false);
-    let _ = std::fs::remove_file(&path);
-    fresh
-}
+// NOTE: the historical `wake_launch_marker` path (a background clap daemon
+// dropped a temp file before launching Jarvis, and we greeted the user on
+// startup) was removed when wake-triggers were restricted to the voice
+// wake-word. Keep the marker filename reserved if we ever resurrect it.
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -94,31 +79,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build());
 
-    // `⌃⌥J` toggles the HUD between fullscreen and the bottom-right widget.
-    // The plugin's handler fires on key press from anywhere in the OS — works
-    // regardless of the panel's click-through state, which is the whole point
-    // (a click-through fullscreen overlay can never receive a real button click).
-    #[cfg(target_os = "macos")]
-    let builder = builder.plugin(
-        tauri_plugin_global_shortcut::Builder::new()
-            .with_handler(|app, _shortcut, event| {
-                if event.state() != ShortcutState::Pressed {
-                    return;
-                }
-                let next = match overlay::current_mode() {
-                    overlay::WidgetMode::Fullscreen => overlay::WidgetMode::Widget,
-                    overlay::WidgetMode::Widget => overlay::WidgetMode::Fullscreen,
-                };
-                if let Some(window) = app.get_webview_window("main") {
-                    if let Err(e) = overlay::apply_widget_mode(&window, next) {
-                        eprintln!("[jarvis] hotkey: apply mode failed: {e}");
-                        return;
-                    }
-                    let _ = app.emit("hud://mode", json!({ "mode": next.as_str() }));
-                }
-            })
-            .build(),
-    );
+    // Global hotkeys (⌃⌥J etc.) are intentionally NOT registered. Wake/open
+    // is restricted to the voice wake-word so casual keyboard activity can't
+    // surprise-summon Jarvis. The tray menu still exposes "Toggle Fullscreen
+    // / Widget" via direct click.
 
     #[cfg(target_os = "macos")]
     let builder = builder.plugin(tauri_nspanel::init());
@@ -144,14 +108,8 @@ pub fn run() {
                 if let Err(e) = overlay::install(app.handle()) {
                     eprintln!("[jarvis] overlay setup failed: {e}");
                 }
-
-                // Register the global toggle hotkey now that the app is up.
-                let toggle = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyJ);
-                if let Err(e) = app.global_shortcut().register(toggle) {
-                    eprintln!("[jarvis] global hotkey register failed: {e}");
-                } else {
-                    println!("[jarvis] hotkey ⌃⌥J → toggle fullscreen ↔ widget");
-                }
+                // Global toggle hotkey is intentionally not registered; see
+                // the comment on the builder above.
             }
 
             // Menu-bar tray icon — the idiomatic "close button" for an
@@ -165,7 +123,7 @@ pub fn run() {
                 "toggle_mode",
                 "Toggle Fullscreen / Widget",
                 true,
-                Some("Ctrl+Alt+J"),
+                None::<&str>,
             )?;
             let sep = tauri::menu::PredefinedMenuItem::separator(app)?;
             let about_item = MenuItem::with_id(
@@ -207,33 +165,16 @@ pub fn run() {
 
             // Start the orchestrator + hands-free listener.
             let engine = pipeline::start(app.handle().clone(), engine_state);
-            let greet_from_clap_launch = consume_wake_launch_marker();
-            app.manage(engine.clone());
-
-            if greet_from_clap_launch {
-                std::thread::spawn(move || {
-                    std::thread::sleep(Duration::from_millis(700));
-                    engine.greet_launch_wake();
-                });
-            }
+            app.manage(engine);
 
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building Jarvis")
-        .run(|app_handle, event| {
-            // Dock-icon click on macOS → bring Jarvis back if it was hidden
-            // by the minimise button (we call window.hide() there). Without
-            // this, `open -a Jarvis` and dock clicks do nothing visible.
-            if let tauri::RunEvent::Reopen { .. } = event {
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    let _ = window.show();
-                    // For our NSPanel, set_focus is a no-op (can_become_key
-                    // is false), but show() alone un-hides it so the panel
-                    // appears at its current PanelLevel::Floating position
-                    // on top of normal app windows.
-                    let _ = window.set_focus();
-                }
-            }
+        .run(|_app_handle, _event| {
+            // No `RunEvent::Reopen` handler: a dock-icon click no longer
+            // un-hides Jarvis. Wake/open is restricted to the voice
+            // wake-word; minimising via the in-HUD button is intended to
+            // be undone by speaking, not by clicking the dock.
         });
 }

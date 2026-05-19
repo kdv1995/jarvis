@@ -36,8 +36,15 @@ pub struct SpeechGate {
     /// Slowly-adapted estimate of the ambient noise RMS.
     noise_floor: f32,
 
+    /// Consecutive loud frames seen while idle — used to confirm a real speech
+    /// onset before flipping to `speaking`. Resets to 0 on the first quiet
+    /// frame. A keyboard tap is 1-2 loud frames flanked by silence and never
+    /// crosses `onset_confirm_frames`; a syllable sustains and crosses easily.
+    pending_speech_frames: usize,
+
     hangover_frames: usize,
     min_speech_frames: usize,
+    onset_confirm_frames: usize,
     pre_roll_samples: usize,
     max_utterance_samples: usize,
 }
@@ -45,12 +52,23 @@ pub struct SpeechGate {
 impl SpeechGate {
     pub fn new() -> Result<Self, String> {
         let frames = |ms: usize| (ms / MS_PER_FRAME).max(1);
+        // Onset confirmation: how many consecutive loud frames are required
+        // before we flip the gate to `speaking`. 2 frames ≈ 64 ms is enough to
+        // reject mechanical keyboard taps (1-2 loud frames followed by
+        // silence) and door-slam transients while still tracking the start of
+        // a real syllable (consonant onsets are 50-200 ms = 2-6 frames).
+        // Tunable via `JARVIS_VAD_ONSET_CONFIRM_MS`.
+        let onset_ms = std::env::var("JARVIS_VAD_ONSET_CONFIRM_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .unwrap_or(64);
         Ok(Self {
             speaking: false,
             utterance: Vec::new(),
             pre_roll: VecDeque::new(),
             silent_run: 0,
             speech_frames: 0,
+            pending_speech_frames: 0,
             noise_floor: ABS_SILENCE_RMS,
             // Hangover: tightened from 800ms → 400ms. The original 800ms was
             // safe for natural speech with long pauses ("uhhh… and then…"),
@@ -59,6 +77,7 @@ impl SpeechGate {
             // 400ms still gives 1-2 frames of margin for mid-word breaths.
             hangover_frames: frames(400),
             min_speech_frames: frames(250),
+            onset_confirm_frames: frames(onset_ms),
             pre_roll_samples: frames(250) * VAD_FRAME,
             max_utterance_samples: 15 * TARGET_RATE,
         })
@@ -77,19 +96,32 @@ impl SpeechGate {
             // Track the ambient noise floor only while idle.
             self.noise_floor = 0.97 * self.noise_floor + 0.03 * rms;
 
-            // Maintain a rolling pre-roll buffer of recent quiet audio.
+            // Maintain a rolling pre-roll buffer of recent quiet audio. The
+            // pending loud frames stay in here too, so when we eventually
+            // confirm onset we drain them into the utterance as a unit.
             self.pre_roll.extend(frame.iter().copied());
             while self.pre_roll.len() > self.pre_roll_samples {
                 self.pre_roll.pop_front();
             }
 
             if rms >= start_threshold {
-                self.speaking = true;
-                self.silent_run = 0;
-                self.speech_frames = 1;
-                self.utterance.clear();
-                self.utterance.extend(self.pre_roll.drain(..));
-                self.utterance.extend_from_slice(frame);
+                // Onset confirmation: don't flip to speaking on a single
+                // transient. Require `onset_confirm_frames` consecutive loud
+                // frames. A keyboard tap is 1-2 loud frames flanked by silence
+                // and never reaches the threshold.
+                self.pending_speech_frames += 1;
+                if self.pending_speech_frames >= self.onset_confirm_frames {
+                    self.speaking = true;
+                    self.silent_run = 0;
+                    self.speech_frames = self.pending_speech_frames;
+                    self.pending_speech_frames = 0;
+                    self.utterance.clear();
+                    self.utterance.extend(self.pre_roll.drain(..));
+                }
+            } else {
+                // Quiet frame breaks the run — the loud frames we saw were a
+                // transient (typing, door, cup-on-desk), not a syllable.
+                self.pending_speech_frames = 0;
             }
             return None;
         }
@@ -139,6 +171,7 @@ impl SpeechGate {
         self.speaking = false;
         self.silent_run = 0;
         self.speech_frames = 0;
+        self.pending_speech_frames = 0;
         self.utterance.clear();
         self.pre_roll.clear();
     }
@@ -151,9 +184,10 @@ impl SpeechGate {
 // spikes far above the ambient baseline *and* far above the frames immediately
 // before and after it. That "loud frame flanked by quiet frames" test is what
 // separates a clap from speech — a speech onset is just as loud but *sustains*
-// across many frames. By default, one confirmed clap fires the trigger. Set
-// `JARVIS_CLAP_WAKE_MODE=double` if the room is noisy and you prefer the old
-// two-clap gesture.
+// across many frames. By default, only a **double-clap** is recognised (two
+// claps inside `DOUBLE_CLAP_*_MS`) — the historical single-clap mode is opt-in
+// via `JARVIS_CLAP_WAKE_MODE=single` because casual ambient transients (door,
+// keyboard) trip it too easily.
 // ---------------------------------------------------------------------------
 
 /// A clap frame's RMS must exceed the adaptive ambient baseline by this factor.
@@ -173,9 +207,12 @@ const DOUBLE_CLAP_MIN_MS: usize = 90;
 const DOUBLE_CLAP_MAX_MS: usize = 1000;
 
 fn single_clap_wake_enabled() -> bool {
+    // Default: double-clap only. Single-clap is now opt-in (set
+    // `JARVIS_CLAP_WAKE_MODE=single`) — defaulting to single produced too many
+    // accidental fires from doors, keyboard strikes, and cup-on-desk taps.
     std::env::var("JARVIS_CLAP_WAKE_MODE")
-        .map(|v| !v.trim().eq_ignore_ascii_case("double"))
-        .unwrap_or(true)
+        .map(|v| v.trim().eq_ignore_ascii_case("single"))
+        .unwrap_or(false)
 }
 
 pub struct ClapDetector {

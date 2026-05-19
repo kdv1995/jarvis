@@ -700,17 +700,6 @@ impl Engine {
         self.speak_wake_phrase(&phrase);
     }
 
-    /// Spoken greeting for the first launch caused by the background clap
-    /// daemon. Unlike the short in-app wake ack, this confirms Jarvis has fully
-    /// started and is ready for the next utterance.
-    pub fn greet_launch_wake(&self) {
-        let phrase = std::env::var("JARVIS_LAUNCH_WAKE_GREETING")
-            .ok()
-            .map(|v| v.trim().to_string())
-            .unwrap_or_else(|| "Jarvis online.".to_string());
-        self.speak_wake_phrase(&phrase);
-    }
-
     fn speak_wake_phrase(&self, phrase: &str) {
         if !phrase.is_empty() {
             // Mark Busy + speaking so the listener_loop's TTS-aware paths
@@ -995,26 +984,14 @@ fn listener_loop(engine: Arc<Engine>) {
                 tts_grace_frames = 0;
                 barge_speech_frames = 0;
 
-                // A double hand-clap wakes Jarvis, exactly like the bare wake
-                // word — it drops the engine into AwaitingCommand so the next
-                // utterance is taken as a command. Also fires the audible
-                // wake-ack ("Yes?") so the user hears confirmation he's
-                // listening before they start speaking. The clap frame
-                // itself is dropped (reset + continue) so it never becomes
-                // "speech".
+                // Clap detection is kept alive for diagnostics, but it no
+                // longer wakes Jarvis. The only allowed opener is the voice
+                // wake-word path below; restricting wake-triggers prevents
+                // accidental opens from desk taps, door slams, etc. The
+                // double-clap is still logged by `ClapDetector::push_frame`
+                // so we can tune it from the field.
                 if clap.push_frame(&frame) {
-                    if engine.mode() == Mode::Idle {
-                        println!("[clap] double-clap detected — waking");
-                        // Worker thread: the ack TTS blocks for ~500 ms;
-                        // running it on the listener thread would stall
-                        // frame intake. Spawn it off and continue draining
-                        // the mic queue. set_mode(Busy) inside the worker
-                        // ensures subsequent frames see Busy state quickly.
-                        let engine_ack = Arc::clone(&engine);
-                        std::thread::spawn(move || {
-                            engine_ack.acknowledge_wake();
-                        });
-                    }
+                    println!("[clap] double-clap detected — ignoring (wake disabled)");
                     gate.reset();
                     was_speaking = false;
                     continue;
